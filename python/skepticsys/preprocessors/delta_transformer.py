@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.utils import check_array
 import collections
@@ -12,7 +13,7 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
         The base estimator from which the transformer is built.
     """
 
-    def __init__(self, start, stop, step=1, operation='diff', fixed_start=False, remainder=True, percent_inf_val=np.nan, percent_midpoint=False):
+    def __init__(self, start, stop, step=1, operation='diff', fixed_start=False, remainder=True, percent_inf_val=np.nan, percent_midpoint=False, direction_negative_dir=0, direction_positive_dir=1):
         """Create a DeltaTransformer object.
 
         Parameters
@@ -28,6 +29,8 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
         self.remainder = remainder
         self.percent_inf_val = percent_inf_val
         self.percent_midpoint = percent_midpoint
+        self.direction_negative_dir = direction_negative_dir
+        self.direction_positive_dir = direction_positive_dir
 
     def fit(self, X, y=None, **fit_params):
         """Fit the DeltaTransformer transformer.
@@ -61,8 +64,8 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
         X_transformed: array-like, shape (n_samples, n_features + 1) or (n_samples, n_features + 1 + n_classes) for classifier with predict_proba attribute
             The transformed feature set.
         """
-        #X = check_array(X)
-        X_base = np.copy(X)
+        is_pandas = isinstance(X, pd.DataFrame) or isinstance(X, pd.Series)
+        X_base = X.copy() if is_pandas else np.copy(X)
         transformed_list = []
         operation = self.operation
         pairs = self._gen_range(self.start, self.stop, self.step, fixed_start=self.fixed_start, remainder=self.remainder)
@@ -75,22 +78,40 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
             elif operation == 'percent':
                 transformed_list.append(self._get_percent(base, subtrahend, inf_val=self.percent_inf_val, midpoint=self.percent_midpoint))
             elif operation in ['direction','dir']:
-                transformed_list.append(self._get_direction(base, subtrahend))
+                transformed_list.append(self._get_direction(base, subtrahend, negative_dir=self.direction_negative_dir, positive_dir=self.direction_positive_dir))
             elif operation in ['cross','crossover']:
                 transformed_list.append(self._get_crossover(base, subtrahend))
             elif operation == 'slope':
                 transformed_list.append(self._get_slope(base, subtrahend, pair))
 
-        X_transformed = np.concatenate(transformed_list, axis=1)
+        if len(transformed_list) > 1:
+            if is_pandas:
+                X_transformed = pd.concat(transformed_list, axis=1)
+            else:
+                X_transformed = np.concatenate(transformed_list, axis=1)
+        elif len(transformed_list) == 1:
+            X_transformed = transformed_list[0]
+        else:
+            X_transformed = pd.Series() if is_pandas else np.array()
 
         return X_transformed
     
     def _gen_range(self, start, stop, step, fixed_start=False, remainder=True):
+        # detect reverse range, and enforce step sign
+        is_reverse = stop < start
+        
+        # fill in step if 0
+        if step is None or step == 0: 
+            step = (stop-abs(start)) if not is_reverse else -(stop-abs(start))
+
+        if (is_reverse and step > 0) or (not is_reverse and step < 0): 
+            step = -step
+        
         # https://stackoverflow.com/questions/14048728/generate-list-of-range-tuples-with-given-boundaries-in-python
         current = next_current = start
-        while next_current < stop:
+        while (next_current < stop) if not is_reverse else (next_current > stop):
             next_current = next_current + step
-            if next_current < stop:
+            if (next_current < stop) if not is_reverse else (next_current > stop):
                 yield (current, next_current)
             elif remainder: # elif remainder and stop-1 > next_current-step:
                 yield (current, stop) # yield (current, stop-1)
@@ -99,17 +120,18 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
             if not fixed_start: current = next_current
 
     def _shift_array(self, arr, num, fill_value=np.nan):
-        # preallocate empty array and assign slice by chrisaycock
-        # https://stackoverflow.com/questions/30399534/shift-elements-in-a-numpy-array
-        result = np.empty_like(arr)
-        if num > 0:
-            result[:num] = fill_value
-            result[num:] = arr[:-num]
-        elif num < 0:
-            result[num:] = fill_value
-            result[:num] = arr[-num:]
+        is_pandas = isinstance(arr, pd.DataFrame) or isinstance(arr, pd.Series)
+
+        if is_pandas:
+            result = arr.shift(num)
+            if fill_value is not np.nan:
+                if num > 0:
+                    result.iloc[:min(num+1, len(result))] = fill_value
+                elif num < 0:
+                    result.iloc[max(len(result)+num, 0):] = fill_value
         else:
-            result = arr
+            result = shift(arr, shift=num, cval=fill_value, mode='constant')
+
         return result
 
     def _get_percent(self, start_val, end_val, inf_val=None, midpoint=False):
@@ -123,10 +145,10 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
     def _get_diff(self, start_val, end_val):
         return end_val-start_val
 
-    def _get_direction(self, start_val, end_val):
+    def _get_direction(self, start_val, end_val, negative_dir=0, positive_dir=1):
         dir_series = self._get_diff(start_val, end_val)
-        dir_series[dir_series <= 0] = self.parameters['negative_class']
-        dir_series[dir_series > 0] = self.parameters['positive_class']
+        dir_series[dir_series <= 0] = negative_dir
+        dir_series[dir_series > 0] = positive_dir
         return dir_series
 
     def _get_crossover(self, start_val, end_val, dummies=False):

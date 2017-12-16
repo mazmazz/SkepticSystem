@@ -2,6 +2,7 @@ import numpy as np
 from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.utils import check_array
 import collections
+from scipy.ndimage.interpolation import shift
 
 class ShiftTransformer(BaseEstimator, TransformerMixin):
     """Transformer for shifting input arrays.
@@ -58,29 +59,39 @@ class ShiftTransformer(BaseEstimator, TransformerMixin):
         """
         shift = self.shift
         fill_value = self.fill_value
+        is_pandas = isinstance(X, pd.DataFrame) or isinstance(X, pd.Series)
 
-        #X = check_array(X)
-        X_base = np.copy(X)
+        if is_pandas:
+            X_base = X.copy()
+        else:
+            X_base = np.copy(X)
+
         transformed_list = [X_base] if self.keep_features else []
 
         for shift_i in shift:
-            transformed_list.append(self._shift_array(X_base, shift_i, fill_value=fill_value))
+            transformed_list.append(
+                self._shift_array(X_base, shift_i, fill_value=fill_value)
+            )
         
-        X_transformed = np.concatenate(transformed_list, axis=1)
+        if is_pandas:
+            X_transformed = pd.concat(transformed_list, axis=1)
+        else:
+            X_transformed = np.concatenate(transformed_list, axis=1)
 
         return X_transformed
 
     def _shift_array(self, arr, num, fill_value=np.nan):
-        # preallocate empty array and assign slice by chrisaycock
-        # https://stackoverflow.com/questions/30399534/shift-elements-in-a-numpy-array
-        result = np.empty_like(arr)
-        if num > 0:
-            result[:num] = fill_value
-            result[num:] = arr[:-num]
-        elif num < 0:
-            result[num:] = fill_value
-            result[:num] = arr[-num:]
+        is_pandas = isinstance(arr, pd.DataFrame) or isinstance(arr, pd.Series)
+
+        if is_pandas:
+            result = arr.shift(num)
+            if fill_value is not np.nan:
+                if num > 0:
+                    result.iloc[:min(num+1, len(result))] = fill_value
+                elif num < 0:
+                    result.iloc[max(len(result)+num, 0):] = fill_value
         else:
-            result = arr
+            result = shift(arr, shift=num, cval=fill_value, mode='constant')
+
         return result
     

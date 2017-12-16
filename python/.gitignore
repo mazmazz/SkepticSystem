@@ -2,3 +2,6 @@ skepticsys.egg-info/*
 *.pyc
 __pycache__
 .vscode/*
+test*
+working/*
+workingOut/*

@@ -48,4 +48,7 @@ class CopyTransformer(BaseEstimator, TransformerMixin):
         X_transformed: array-like, shape (n_samples, n_features + 1) or (n_samples, n_features + 1 + n_classes) for classifier with predict_proba attribute
             Copied features.
         """
-        return np.copy(X)
+        if isinstance(X, pd.DataFrame) or isinstance(X, pd.Series):
+            return X.copy()
+        else:
+            return np.copy(X)
