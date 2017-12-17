@@ -1,5 +1,5 @@
 from .data import get_data_space
-
+from .indicator import get_indicator_space
 from .classifier import get_classifier_space
 from .calibration import get_calibration_space
 

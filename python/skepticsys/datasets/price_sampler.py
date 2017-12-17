@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from imblearn.base import SamplerMixin
-from load_prices import load_prices, get_target
+from .load_prices import load_prices, get_target
 
 class PriceSampler(SamplerMixin):
     def __init__(self
@@ -9,8 +9,8 @@ class PriceSampler(SamplerMixin):
         , granularity
         , target_end_offset
 
-        , start_date=None
-        , end_date=None 
+        , start_index=None
+        , end_index=None 
         , source='csv'
 
         , target_start_offset=-1
@@ -22,8 +22,8 @@ class PriceSampler(SamplerMixin):
     ):
         self.instrument = instrument
         self.granularity = granularity
-        self.start_date = start_date
-        self.end_date = end_date
+        self.start_index = start_index
+        self.end_index = end_index
         self.source = source
         self.prices_kwargs = kwargs
 
@@ -43,7 +43,7 @@ class PriceSampler(SamplerMixin):
     def _sample(self, X=None, y=None):
         X_is_pandas = not isinstance(X, np.ndarray)
         y_is_pandas = not isinstance(y, np.ndarray)
-        prices = load_prices(self.instrument, self.granularity, start_date=self.start_date, end_date=self.end_date, source=self.source, **self.prices_kwargs)
+        prices = load_prices(self.instrument, self.granularity, start_index=self.start_index, end_index=self.end_index, source=self.source, **self.prices_kwargs)
         target = get_target(prices, self.end_offset, start_offset=self.start_offset, column=self.column, operation=self.operation)
 
         if not X_is_pandas: prices = prices.as_matrix()

@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from csv_prices import load_csv_prices
+from .csv_prices import load_csv_prices
 
 # parent submodules
 from inspect import getsourcefile
@@ -16,13 +16,13 @@ sys.path.pop(0)
 def load_prices(
     instrument
     , granularity
-    , start_date=None
-    , end_date=None 
+    , start_index=None
+    , end_index=None 
     , source='csv'
     , **kwargs
 ):
     if source == 'csv':
-        return load_csv_prices(instrument, granularity, start_date, end_date, **kwargs)
+        return load_csv_prices(instrument, granularity, start_index, end_index, **kwargs)
     else:
         return None
 
