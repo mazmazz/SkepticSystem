@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.utils import check_array
 import collections

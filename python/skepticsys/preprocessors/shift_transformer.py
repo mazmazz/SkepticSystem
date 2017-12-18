@@ -1,8 +1,16 @@
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.utils import check_array
 import collections
 from scipy.ndimage.interpolation import shift
+
+# parent submodules
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import _rename_pandas
+sys.path.pop(0)
+# end parent submodules
 
 class ShiftTransformer(BaseEstimator, TransformerMixin):
     """Transformer for shifting input arrays.
@@ -13,7 +21,7 @@ class ShiftTransformer(BaseEstimator, TransformerMixin):
         The base estimator from which the transformer is built.
     """
 
-    def __init__(self, shift, fill_value=np.nan, keep_features=False):
+    def __init__(self, start, stop=None, step=None, fill_value=np.nan, keep_features=False):
         """Create a ShiftTransformer object.
 
         Parameters
@@ -21,7 +29,9 @@ class ShiftTransformer(BaseEstimator, TransformerMixin):
         shift: integer, list, or range
             Number of elements, or list of numbers, to shift by. Positive means shift to previous values, negative means shift to next values.
         """
-        self.shift = shift if isinstance(shift, collections.Iterable) else [shift]
+        self.start = start
+        self.stop = stop
+        self.step = step
         self.fill_value = fill_value
         self.keep_features = keep_features
 
@@ -57,7 +67,7 @@ class ShiftTransformer(BaseEstimator, TransformerMixin):
         X_transformed: array-like, shape (n_samples, n_features + 1) or (n_samples, n_features + 1 + n_classes) for classifier with predict_proba attribute
             The transformed feature set.
         """
-        shift = self.shift
+        shift = [self.start] if self.stop is None and self.step is None else range(round(self.start), round(self.stop), round(self.step) if self.step is not None else 1)
         fill_value = self.fill_value
         is_pandas = isinstance(X, pd.DataFrame) or isinstance(X, pd.Series)
 
@@ -69,9 +79,10 @@ class ShiftTransformer(BaseEstimator, TransformerMixin):
         transformed_list = [X_base] if self.keep_features else []
 
         for shift_i in shift:
-            transformed_list.append(
-                self._shift_array(X_base, shift_i, fill_value=fill_value)
-            )
+            arr = self._shift_array(X_base, shift_i, fill_value=fill_value)
+            if is_pandas: 
+                _rename_pandas(arr, '__shift_%s'%(shift_i), inplace=True)
+            transformed_list.append(arr)
         
         if is_pandas:
             X_transformed = pd.concat(transformed_list, axis=1)

@@ -5,8 +5,8 @@ from .calibration import get_calibration_space
 
 def get_space(args):
     spaces = [
-        get_data_space(**args['data__args'])
-        , get_indicator_space()
+        get_data_space(**(args['data__args'] if 'data__args' in args else {}))
+        , get_indicator_space(**(args['indicator__args'] if 'indicator__args' in args else {}))
         , get_classifier_space()
         , get_calibration_space()
     ]

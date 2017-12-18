@@ -3,13 +3,9 @@ import pandas as pd
 from .csv_prices import load_csv_prices
 
 # parent submodules
-from inspect import getsourcefile
-import os.path as path, sys
-current_dir = path.dirname(path.abspath(getsourcefile(lambda:0)))
-sys.path.insert(0, current_dir[:current_dir.rfind(path.sep)])
-#
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from preprocessors.delta_transformer import DeltaTransformer
-#
 sys.path.pop(0)
 # end parent submodules
 

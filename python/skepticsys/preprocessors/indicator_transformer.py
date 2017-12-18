@@ -1,8 +1,15 @@
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.base import BaseEstimator, TransformerMixin, _pprint
 import logging
 import inspect
+
+# parent submodules
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import _get_price_field
+sys.path.pop(0)
+# end parent submodules
 
 def _is_indicator_talib(name):
     try:
@@ -64,23 +71,37 @@ def _format_indicator_output(data, is_pandas):
     if is_pandas:
         data = pd.DataFrame(data)
     else:
-        #out_names = list(data)
         data = np.stack(list(data.values())).transpose()
-        #data.dtype = tuple([(out_name, np.float64) for out_name in out_names])
     return data
 
-def _get_price_field(prices, field, input_names={}):
-    is_pandas = isinstance(prices, pd.DataFrame) or isinstance(prices, pd.Series)
-    if is_pandas:
-        output = prices[input_names[field]] if field in input_names else prices[field]
-    else:
-        col_names = (
-            ['open','high','low','close','volume'] if prices.shape[1] <= 5
-            else ['open','high','low','close','adjclose','volume']
-        )
-        output = prices[:,col_names.index(input_names[field] if field in input_names else field)]
+def _get_input_names(inputs, indi_fields, input_df):
+    # expected: [[input, input], [input, input]], in order of field definition
+    # or [{field: input, ...},{field: input, ...}]
+    # allowed: True - only applies for single fields; False - returns empty indi input
+    # allowed: [input, input, input] - makes sense for single fields, otherwise will output [{field1: input},{field2: input}] etc
+    # allowed: empty inputs [], assign default inputs
 
-    return output
+    if isinstance(inputs, dict):
+        inputs = [inputs]
+
+    if inputs is None or inputs is False or len(indi_fields) <= 0:
+        return [{}]
+    elif inputs is True:
+        return [{field_name: col_name for field_name in indi_fields} for col_name in input_df]
+    elif len(inputs) <= 0:
+        return [{field_name: field_name for field_name in indi_fields}] # if field_name in input_df}]
+    else:
+        output = []
+
+        for inp in inputs:
+            if isinstance(inp, list):
+                output.append({field_name: inp_name for field_name, inp_name in zip(indi_fields, inp)})
+            elif isinstance(inp, dict):
+                output.append({inp_field: inp[inp_field] for inp_field in inp})
+            else:
+                output.append({field_name: inp for field_name in indi_fields})
+        
+        return output
 
 ########## talib ##########
 
@@ -100,9 +121,6 @@ def _talib_indicator(name, prices, input_names=None, **kwargs):
     indi_function.parameters = kwargs
     
     # get input fields
-    if not isinstance(input_names, dict):
-        input_names = {}
-
     # Most indis have 'price' if they take only one field, or 'prices' if they take multiple
     # OBV has both 'price' (close) and 'prices' ([volume]) for some reason, so include both in indi_fields
     indi_fields_in = indi_function.input_names
@@ -113,24 +131,27 @@ def _talib_indicator(name, prices, input_names=None, **kwargs):
         indi_fields.extend(indi_fields_in['prices'])
 
     # get inputs
-    indi_inputs = {
-        field: (
-            _get_price_field(prices, field, input_names=input_names).as_matrix().astype(np.float64) if is_pandas
-            else _get_price_field(prices, field, input_names=input_names).astype(np.float64)
-        ) for field in indi_fields
-    }
-
-    # get result
-    result = indi_function.run(indi_inputs)
-
-    # format output
+    input_names = _get_input_names(input_names, indi_fields, prices)
     output = {}
-    for j, out_name in enumerate(indi_function.output_names):
-        col_name = '%s_%s' % (name, out_name)
-        output[col_name] = (
-            pd.Series(result[j] if isinstance(result, list) else result, index=prices.index) if is_pandas
-            else result[j] if isinstance(result, list) else result
-        )
+    for i, names in enumerate(input_names):
+        indi_inputs = {
+            field: (
+                _get_price_field(prices, field, input_names=names).as_matrix().astype(np.float64) if is_pandas
+                else _get_price_field(prices, field, input_names=names).astype(np.float64)
+            ) for field in indi_fields
+        }
+
+        # get result
+        result = indi_function.run(indi_inputs)
+
+        # format output
+        for j, out_name in enumerate(indi_function.output_names):
+            set_name = ':'.join('{}'.format(v) for k, v in names.items()) # '{}'.format(i)
+            col_name = '%s__%s_%s%s' % (name, out_name, set_name, '_%s'%(i) if len(input_names) > 1 else '')
+            output[col_name] = (
+                pd.Series(result[j] if isinstance(result, list) else result, index=prices.index) if is_pandas
+                else result[j] if isinstance(result, list) else result
+            )
 
     return _format_indicator_output(output, is_pandas)
 
@@ -159,30 +180,37 @@ def _tulip_indicator(name, prices, input_names=None, nan_offset=0, **kwargs):
         # this list also includes price params, which are ignored as long as kwargs does not have them
     
     # get input fields
-    if not isinstance(input_names, dict):
-        input_names = {}
     indi_fields = indi_function.inputs
 
     # get inputs
-    indi_inputs = {
-        field: (
-            _trim_nan(_get_price_field(prices, field, input_names=input_names).as_matrix().astype(np.float64), trim=trim_nan_side) if is_pandas
-            else _trim_nan(_get_price_field(prices, field, input_names=input_names).astype(np.float64), trim=trim_nan_side)
-        ) for field in indi_fields
-    }
-
-    # get result
-    result = indi_function(**indi_inputs, **indi_parameters)
-
-    # format output
+    input_names = _get_input_names(input_names, indi_fields, prices)
     output = {}
-    for j, out_name in enumerate(indi_function.outputs):
-        col_name = '%s_%s' % (name, out_name)
-        arr = _pad_array(result[j] if isinstance(result, tuple) else result, nan_offset, len(prices))
-        output[col_name] = (
-            pd.Series(arr, index=prices.index) if is_pandas
-            else arr
-        )
+    for i, names in enumerate(input_names):
+        indi_inputs = {
+            field: (
+                _trim_nan(_get_price_field(prices, field, input_names=names).as_matrix().astype(np.float64), trim=trim_nan_side) if is_pandas
+                else _trim_nan(_get_price_field(prices, field, input_names=names).astype(np.float64), trim=trim_nan_side)
+            ) for field in indi_fields
+        }
+
+        # get result
+        result = indi_function(**indi_inputs, **indi_parameters)
+
+        # format output
+        for j, out_name in enumerate(indi_function.outputs):
+            set_name = ':'.join('{}'.format(v) for k, v in names.items()) # '{}'.format(i)
+            col_name = '%s__%s_%s%s' % (name, out_name, set_name, '_%s'%(i) if len(input_names) > 1 else '')
+            arr = _pad_array(result[j] if isinstance(result, tuple) else result, nan_offset, len(prices))
+            
+            ### DEBUG ###
+            if col_name in output:
+                print('DEBUG: col_name already exists in output')
+                import pdb; pdb.set_trace()
+            
+            output[col_name] = (
+                pd.Series(arr, index=prices.index) if is_pandas
+                else arr
+            )
 
     return _format_indicator_output(output, is_pandas)
 
@@ -276,6 +304,12 @@ class IndicatorTransformer(BaseEstimator, TransformerMixin):
         self.copy_prices = copy_prices
         self.default_lib = default_lib
         self.indicators = kwargs
+
+    def __repr__(self):
+        # needed to add indicators to the output
+        class_name = self.__class__.__name__
+        return '%s(%s)' % (class_name, _pprint({**self.get_params(deep=False), **self.indicators},
+                                               offset=len(class_name),),)
 
     def fit(self, x, y=None):
         return self

@@ -4,6 +4,13 @@ from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.utils import check_array
 import collections
 
+# parent submodules
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import _rename_pandas
+sys.path.pop(0)
+# end parent submodules
+
 class DeltaTransformer(BaseEstimator, TransformerMixin):
     """Transformer for shifting input arrays.
 
@@ -74,15 +81,21 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
             base = self._shift_array(X_base, pair[0])
             subtrahend = self._shift_array(X_base, pair[1])
             if operation in ['diff','difference','delta']: 
-                transformed_list.append(self._get_diff(base, subtrahend))
+                arr = self._get_diff(base, subtrahend)
             elif operation == 'percent':
-                transformed_list.append(self._get_percent(base, subtrahend, inf_val=self.percent_inf_val, midpoint=self.percent_midpoint))
+                arr = self._get_percent(base, subtrahend, inf_val=self.percent_inf_val, midpoint=self.percent_midpoint)
             elif operation in ['direction','dir']:
-                transformed_list.append(self._get_direction(base, subtrahend, negative_dir=self.direction_negative_dir, positive_dir=self.direction_positive_dir))
+                arr = self._get_direction(base, subtrahend, negative_dir=self.direction_negative_dir, positive_dir=self.direction_positive_dir)
             elif operation in ['cross','crossover']:
-                transformed_list.append(self._get_crossover(base, subtrahend))
+                arr = self._get_crossover(base, subtrahend)
             elif operation == 'slope':
-                transformed_list.append(self._get_slope(base, subtrahend, pair))
+                arr = self._get_slope(base, subtrahend, pair)
+            else:
+                continue
+
+            if is_pandas:
+                _rename_pandas(arr, '__'+self._get_pair_name(operation, pair[0], pair[1]), inplace=True)
+            transformed_list.append(arr)
 
         if len(transformed_list) > 1:
             if is_pandas:
@@ -92,7 +105,7 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
         elif len(transformed_list) == 1:
             X_transformed = transformed_list[0]
         else:
-            X_transformed = pd.Series() if is_pandas else np.array()
+            X_transformed = pd.Series(name='__delta') if is_pandas else np.array()
 
         return X_transformed
     
@@ -119,8 +132,12 @@ class DeltaTransformer(BaseEstimator, TransformerMixin):
                 break
             if not fixed_start: current = next_current
 
+    def _get_pair_name(self, mode, start, stop):
+        return '{}_{}:{}'.format(mode, start, stop)
+
     def _shift_array(self, arr, num, fill_value=np.nan):
         is_pandas = isinstance(arr, pd.DataFrame) or isinstance(arr, pd.Series)
+        num = round(num)
 
         if is_pandas:
             result = arr.shift(num)
