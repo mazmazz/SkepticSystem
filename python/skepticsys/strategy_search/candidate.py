@@ -4,11 +4,16 @@ import hyperopt as hp
 from imblearn.pipeline import make_pipeline
 from collections import OrderedDict
 import copy
+from xgboost import XGBClassifier
+import random
+import sklearn.metrics as skm
+from sklearn.utils.sparsefuncs import count_nonzero
 
 # parent submodules
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer
+from cross_validation import SingleSplit, WindowSplit
+from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer, NanSampler
 from datasets import load_prices, get_target
 from pipeline import make_union
 sys.path.pop(0)
@@ -21,20 +26,119 @@ def do_candidate(params):
         # https://stackoverflow.com/a/1278740
         fname = os.path.split(sys.exc_info()[-1].tb_frame.f_code.co_filename)[1]
         msg = '%s, %s, %s | %s' % (sys.exc_info()[0].__name__, fname, sys.exc_info()[-1].tb_lineno, str(e))
-        return {'status': hp.STATUS_FAIL, 'msg': 'Exception: %s'%(msg)}
+        out = {'status': hp.STATUS_FAIL, 'msg': 'Exception: %s'%(msg)}
+        print(out)
+        return out
 
 def do_fit_predict(params):
+    #setup
+    nans = NanSampler(drop_inf=False)
+    cv = SingleSplit(test_size=100)
+    print('='*48)
+
     # load prices
     prices, target = do_data(**params['data__params'])
     prices_trade = prices.copy()
+    target_trade = target.copy()
+
+    # get cv model and check validity
+    prices_model, target_model = nans.sample(prices, target)
+
+    cv_model = list(cv.split(prices_model))
+    for i, (train, test) in enumerate(cv_model):
+        if len(train) == 0 or len(test) == 0:
+            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: set size is 0', 'train_len': len(train), 'test_len': len(test)}
+        else:
+            print('Model CV {} freqs: {}'.format(i, target_model.iloc[test].value_counts().to_dict()))
 
     # do indicators
+    print('Doing indicators') ##############
     indi_pipeline = do_indicators(**params['indicator__params'])
     if not bool(indi_pipeline):
         return {'status': hp.STATUS_FAIL,'msg':'Indicator pipeline: No transformers'}
     prices_indi = indi_pipeline.transform(prices)
 
-    return {'status': hp.STATUS_FAIL, 'msg': 'Finished, not implemented', 'shape': prices_indi.shape if hasattr(prices_indi,'shape') else 'No shape? ' + str(type(prices_indi))}
+    # drop nan
+    prices, target = nans.sample(prices_indi, target)
+
+    if len(prices) == 0:
+        return {'status': hp.STATUS_FAIL,'msg':'Nan pipeline: No prices exist after transformation','shape':prices.shape}
+
+    # make all column names unique
+    dup_cols = prices.columns.get_duplicates()
+    if len(dup_cols) > 0:
+        dups = prices.columns[prices.columns.isin(dup_cols)]
+        dup_vals = prices.loc[:,prices.columns.isin(dup_cols)]
+        unq_vals = prices.loc[:,~prices.columns.isin(dup_cols)]
+        fixed_dups = dups.map(lambda x: x+'__'+str(random.uniform(0,1)))
+        dup_vals.columns = fixed_dups
+        prices = pd.concat([unq_vals, dup_vals], axis=1)
+
+    # do classifier
+    print('Doing classifier') ##############
+    print('Prices shape: {}'.format(prices.shape if hasattr(prices, 'shape') else None))
+
+    clf = do_classifier(**params['classifier__params'])
+
+    # split CV
+    y_pred_sig, y_df_sig, y_test_sig = [], [], []
+    cv_split = list(cv.split(prices))
+
+    ### TODO ### More sophisticated CV model checking
+    if len(cv_split) != len(cv_model):
+        return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: does not match model split count', 'split_len': len(cv_split), 'model_len': len(cv_model)}
+
+    for i, ((train, test), (train_model, test_model)) in enumerate(zip(cv_split, cv_model)):
+        # validate CV
+        print('CV {} size: {}, {}'.format(i, len(train), len(test))) ##############
+        if len(train) == 0 or len(test) == 0:
+            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: set size is 0', 'train_len': len(train), 'test_len': len(test)}
+
+        if len(test) != len(test_model):
+            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: test len does not match model', 'test_len': len(test), 'model_len': len(test_model)}
+
+        X_train, X_test, y_train, y_test = prices.iloc[train], prices.iloc[test], target.iloc[train], target.iloc[test]
+        y_model = target_trade.iloc[test_model]
+        
+        # count CV frequencies
+        test_counts, model_counts = y_test.value_counts().to_dict(), y_model.value_counts().to_dict()
+        print('CV {} freqs: {} | Model freqs: {}'.format(i, test_counts, model_counts))
+        if test_counts != model_counts:
+            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: test freqs do not match model', 'test_freqs': test_counts, 'model_freqs': model_counts}
+
+        # fit, predict
+        print('Fitting') ##############
+        clf.fit(X_train, y_train)
+        print('Predicting') ##############
+        y_pred = clf.predict(X_test)
+        y_df = clf.predict_proba(X_test)
+
+        # combine for scoring
+        y_pred_sig.append(y_pred)
+        y_df_sig.append(y_df)
+        y_test_sig.append(y_test)
+
+    # score
+    print('Scoring') ##############
+    y_test = pd.concat(y_test_sig)
+    y_pred = pd.concat([pd.Series(y_pred_sig[i], index=y_test_sig[i].index) for i in range(len(y_pred_sig))], axis=0)
+    y_df = pd.concat([pd.DataFrame(y_df_sig[i], index=y_test_sig[i].index) for i in range(len(y_pred_sig))], axis=0)
+
+    acc = skm.accuracy_score(y_test, y_pred)
+    precision, recall, fscore, support = skm.precision_recall_fscore_support(y_test, y_pred)
+
+    out = {
+        'status': hp.STATUS_OK
+        , 'loss': -acc
+        , 'precision': list(precision if precision is not None else [])
+        , 'recall': list(recall if recall is not None else [])
+        #, 'fscore': list(fscore if fscore is not None else [])
+        , 'support': list(support if support is not None else [])
+        , 'shape': prices.shape if hasattr(prices,'shape') else 'No shape? ' + str(type(prices))
+    }
+
+    import pprint; pprint.pprint(out)
+    return out
 
 def do_data(
     instrument
@@ -129,5 +233,39 @@ def do_indicators(
         return master_union[0]
     elif len(master_union) > 1:
         return make_union(*master_union)
+    else:
+        return None
+
+def do_classifier(
+    **classifier_params
+):
+    master_pieces = {}
+    for _, pipe_params in classifier_params.items():
+        if not bool(pipe_params):
+            continue
+
+        order_base = pipe_params.pop('_order_base', 0.)
+        order_factor = pipe_params.pop('_order_factor', 0.)
+        order_key = float(order_base)*float(order_factor)
+        while order_key in master_pieces:
+            order_key += random.uniform(-1,1)
+
+        pipe_pieces = []
+        for clf_name, clf_params in pipe_params.items():
+            if not bool(clf_params):
+                continue
+
+            if clf_name == 'xgb':
+                pipe_pieces.append(XGBClassifier(**clf_params))
+
+        if len(pipe_pieces) == 1:
+            master_pieces[order_key] = pipe_pieces[0]
+        elif len(pipe_pieces) > 1:
+            master_pieces[order_key] = make_pipeline(*pipe_pieces)
+
+    if len(master_pieces) == 1:
+        return list(master_pieces.items())[0][-1] # value
+    elif len(master_pieces) > 1:
+        return make_pipeline(*[master_pieces[k] for k in sorted(list(master_pieces))])
     else:
         return None

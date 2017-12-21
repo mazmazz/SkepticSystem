@@ -1,31 +1,43 @@
 from hyperopt import hp
+from xgboost import XGBClassifier
 
 def get_classifier_space(
-    classifiers=['xgb']
+    classifiers={}
 ):
-    if not bool(classifiers):
-        return {}
+    pipe_pool = {**default_classifiers,**classifiers}
+    space = {}
 
-    choices = []
+    for pipe_name, pipe_cand in pipe_pool.items():
+        if not bool(pipe_cand):
+            continue
 
-    if 'xgb' in classifiers:
-        choices.append({
-            # xgb: https://www.analyticsvidhya.com/blog/2016/03/complete-guide-parameter-tuning-xgboost-with-codes-python/
-            # https://cambridgespark.com/content/tutorials/hyperparameter-tuning-in-xgboost/index.html
-            # https://github.com/dmlc/xgboost/blob/master/doc/parameter.md
-            'type': 'xgb'
-            , 'max_depth': hp.choice('xgb__max_depth', range(3,11))
-            , 'learning_rate': 0.3
-            , 'objective': 'binary:logistic' # when testing calibration, will need to detect when to replace this
-            , 'eval_metric': hp.choice('xgb__eval_metric', ['error','auc','rmse','logloss'])
-                # error allows for threshold different than 0.5 according to error@t. How to roll this in?
-            , 'silent': True
-        })
+        pipe_space = {}
+        for clf_type, clf_params in pipe_cand.items():
+            if not bool(clf_params):
+                continue
+            else:
+                pipe_space[clf_type] = clf_params
 
-    if None in classifiers and len(choices) > 0:
-        choices.append(None)
+        if len(pipe_space) < 1:
+            continue
+        else:
+            pipe_space['_order_factor'] = 0 if len(pipe_pool) < 2 else hp.uniform('clf__'+pipe_name+'__order_factor', 0, 1)
+            space[pipe_name] = pipe_space if len(pipe_pool) < 2 else hp.choice('clf__'+pipe_name, [None, pipe_space])
 
     return {
-        'classifier__params': hp.choice('classifier__params', choices) if len(choices) > 0 else None
+        'classifier__params': space
     }
 
+default_classifiers = {
+    'xgbdefault': {
+        '_order_base': -999
+        , 'xgb': {
+            'eval_metric': 'error', # hp.choice('xgb__eval_metric', ['error','auc','rmse','logloss'])
+                # error allows for threshold different than 0.5 according to error@t. How to roll this in?
+            'learning_rate': 0.3,
+            'max_depth': 6, #hp.choice('xgb__max_depth', range(3,11))
+            'objective': 'binary:logistic', # when testing calibration, will need to detect when to replace this
+            'silent': True
+        }
+    }
+}

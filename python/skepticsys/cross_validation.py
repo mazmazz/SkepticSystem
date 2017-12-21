@@ -3,6 +3,82 @@ from sklearn.utils.validation import (_num_samples, indexable)
 from math import floor
 import numpy as np
 
+def _get_size(n_samples, size, neg_mode='pass'):
+    if size is not None:
+        if abs(size) < 1: 
+            size = floor(abs(n_samples*size)) * (-1 if size < 0 else 1) # floor towards abs value, not lowest number
+
+        if size < 0:
+            if neg_mode == 'subtract':
+                return n_samples+size
+            else: # neg_mode == 'pass':
+                return size
+    
+    return size
+
+class SingleSplit(BaseCrossValidator):
+    """Single split cross-validator.
+
+    Provides train/test indices to split time series data samples
+    that are observed at fixed time intervals, in train/test sets.
+    In each split, test indices must be higher than before, and thus shuffling
+    in cross validator is inappropriate.
+
+    Parameters
+    ----------
+    test_size: int or float, default=0.1
+        Size of test set. If this is a fraction between 0 and 1, size is figured
+        from the proportion of sample size, dependent on `initial_index`
+
+    initial_index: int or float, default=0
+        Initial index of train series. This may determine both train and test
+        size, if `test_size` is a fraction. If `initial_index` is a fraction
+        between 0 and 1, size is figured from the proportion of total sample
+        size.
+    """
+    def __init__(self, test_size=0.1, initial_index=0):
+        self.test_size = test_size
+        self.initial_index = initial_index
+    
+    def split(self, X, y=None, groups=None):
+        """Generate indices to split data into training and test set.
+
+        Parameters
+        ----------
+        X : array-like, shape (n_samples, n_features)
+            Training data, where n_samples is the number of samples
+            and n_features is the number of features.
+
+        y : array-like, shape (n_samples,)
+            Always ignored, exists for compatibility.
+
+        groups : array-like, with shape (n_samples,), optional
+            Always ignored, exists for compatibility.
+
+        Returns
+        -------
+        train : ndarray
+            The training set indices for that split.
+
+        test : ndarray
+            The testing set indices for that split.
+        """
+        X, y, groups = indexable(X, y, groups)
+        n_samples = _num_samples(X)
+        initial_index = max(0, _get_size(n_samples, self.initial_index, neg_mode='subtract'))
+        final_index = n_samples
+        test_size = _get_size(n_samples-initial_index, self.test_size, neg_mode='subtract')
+        
+        indices = np.arange(n_samples)
+        train = indices[initial_index:-test_size]
+        test  = indices[-test_size:final_index]
+
+        yield train, test
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        # I've only seen this for test suites, so pass a fake number
+        return 2
+
 class WindowSplit(BaseCrossValidator):
     """Expanding or sliding window cross-validator
 
@@ -105,13 +181,13 @@ class WindowSplit(BaseCrossValidator):
 
         X, y, groups = indexable(X, y, groups)
         n_samples = _num_samples(X)
-        test_size = self._get_size(n_samples, self.test_size)
-        step_size = self._get_size(n_samples, self.step_size)
-        delay_size = self._get_size(n_samples, self.delay_size)
-        sliding_size = self._get_size(n_samples, self.sliding_size)
-        initial_index = self._get_size(n_samples, self.initial_index, neg_mode='subtract')
-        final_index = self._get_size(n_samples, self.final_index, neg_mode='subtract')
-        min_test_size = self._get_size(n_samples, self.min_test_size)
+        test_size = _get_size(n_samples, self.test_size)
+        step_size = _get_size(n_samples, self.step_size)
+        delay_size = _get_size(n_samples, self.delay_size)
+        sliding_size = _get_size(n_samples, self.sliding_size)
+        initial_index = _get_size(n_samples, self.initial_index, neg_mode='subtract')
+        final_index = _get_size(n_samples, self.final_index, neg_mode='subtract')
+        min_test_size = _get_size(n_samples, self.min_test_size)
         test_remainder = self.test_remainder
         force_sliding_min = self.force_sliding_min
         test_expanding = test_size is None
@@ -158,19 +234,6 @@ class WindowSplit(BaseCrossValidator):
     def get_n_splits(self, X=None, y=None, groups=None):
         # I've only seen this for test suites, so pass a fake number
         return 2
-
-    def _get_size(self, n_samples, size, neg_mode='pass'):
-        if size is not None:
-            if abs(size) < 1: 
-                size = floor(abs(n_samples*size)) * (-1 if size < 0 else 1) # floor towards abs value, not lowest number
-
-            if size < 0:
-                if neg_mode == 'subtract':
-                    return n_samples+size
-                else: # neg_mode == 'pass':
-                    return size
-        
-        return size
 
     def _do_validation(self, n_samples, step_size, initial_index):
         if step_size < 1:

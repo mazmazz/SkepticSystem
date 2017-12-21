@@ -52,7 +52,7 @@ def get_delta_space(indi, prefix, ma=False):
         '_base': hp.choice(indi+prefix+'__delta__base', [False,True])
         , '_diff': hp.choice(indi+prefix+'__delta__diff', [None, {
             '_ma': hp.choice(indi+prefix+'__delta__diff__ma', [None, get_ma_params(indi, prefix+'__delta__diff') if ma else None])
-            , '_shift': hp.choice(indi+prefix+'__delta__shift', [None, get_shift_space(indi, prefix+'__delta__diff')])
+            , '_shift': hp.choice(indi+prefix+'__delta__diff__shift', [None, get_shift_space(indi, prefix+'__delta__diff')])
             , 'operation': 'diff'
             , 'start': 0
             , 'stop': hp.quniform(indi+prefix+'__delta__diff__stop', 2, 15, 1)
@@ -61,7 +61,7 @@ def get_delta_space(indi, prefix, ma=False):
         }])
         , '_percent': hp.choice(indi+prefix+'__delta__percent', [None, {
             '_ma': hp.choice(indi+prefix+'__delta__percent__ma', [None, get_ma_params(indi, prefix+'__delta__percent') if ma else None])
-            , '_shift': hp.choice(indi+prefix+'__delta__shift', [None, get_shift_space(indi, prefix+'__delta__percent')])
+            , '_shift': hp.choice(indi+prefix+'__delta__percent__shift', [None, get_shift_space(indi, prefix+'__delta__percent')])
             , 'operation': 'percent'
             , 'start': 0
             , 'stop': hp.quniform(indi+prefix+'__delta__percent__stop', 2, 15, 1)
@@ -70,7 +70,7 @@ def get_delta_space(indi, prefix, ma=False):
         }])
         , '_direction': hp.choice(indi+prefix+'__delta__direction', [None, {
             '_ma': hp.choice(indi+prefix+'__delta__direction__ma', [None, get_ma_params(indi, prefix+'__delta__direction') if ma else None])
-            , '_shift': hp.choice(indi+prefix+'__delta__shift', [None, get_shift_space(indi, prefix+'__delta__direction')])
+            , '_shift': hp.choice(indi+prefix+'__delta__direction__shift', [None, get_shift_space(indi, prefix+'__delta__direction')])
             , 'operation': 'direction'
             , 'start': 0
             , 'stop': hp.quniform(indi+prefix+'__delta__direction__stop', 2, 15, 1)
@@ -87,4 +87,4 @@ def get_shift_space(indi, prefix):
         , 'stop': hp.quniform(indi+prefix+'__shift__stop', 2, 15, 1)
         , 'step': 1 # hp.quniform(indi+prefix+'__shift__step', 1, 5, 1)
     }
-    return hp.choice(indi+prefix+'__shift', [None, space])
+    return hp.choice(indi+prefix+'__shift__params', [None, space])
