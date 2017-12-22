@@ -9,6 +9,8 @@ import random
 import sklearn.metrics as skm
 from sklearn.utils.sparsefuncs import count_nonzero
 import backtrader as bt
+import uuid
+import datetime
 
 # parent submodules
 import os, sys
@@ -30,9 +32,16 @@ def do_candidate(params):
         # https://stackoverflow.com/a/1278740
         fname = os.path.split(sys.exc_info()[-1].tb_frame.f_code.co_filename)[1]
         msg = '%s, %s, %s | %s' % (sys.exc_info()[0].__name__, fname, sys.exc_info()[-1].tb_lineno, str(e))
-        out = {'status': hp.STATUS_FAIL, 'msg': 'Exception: %s'%(msg)}
-        print(out)
+        out = fail_trial('Exception: %s'%(msg))
+        #print(out)
         return out
+
+def fail_trial(msg, **data):
+    out = {'status': hp.STATUS_FAIL, 'id': str(uuid.uuid4()), 'date': str(datetime.datetime.now()), 'msg': msg}
+    for k in data:
+        out[k] = data[k]
+    print('Trial failed: {}'.format(msg))
+    return out
 
 def do_fit_predict(params):
     #setup
@@ -51,7 +60,7 @@ def do_fit_predict(params):
     cv_model = list(cv.split(prices_model))
     for i, (train, test) in enumerate(cv_model):
         if len(train) == 0 or len(test) == 0:
-            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: set size is 0', 'train_len': len(train), 'test_len': len(test)}
+            return fail_trial('CV invalid: set size is 0', train_len=len(train), test_len=len(test))
         else:
             print('Model CV {} freqs: {}'.format(i, target_model.iloc[test].value_counts().to_dict()))
 
@@ -59,14 +68,14 @@ def do_fit_predict(params):
     print('Doing indicators') ##############
     indi_pipeline = do_indicators(**params['indicator__params'])
     if not bool(indi_pipeline):
-        return {'status': hp.STATUS_FAIL,'msg':'Indicator pipeline: No transformers'}
+        return fail_trial('Indicator pipeline: No transformers')
     prices_indi = indi_pipeline.transform(prices)
 
     # drop nan
     prices, target = nans.sample(prices_indi, target)
 
     if len(prices) == 0:
-        return {'status': hp.STATUS_FAIL,'msg':'Nan pipeline: No prices exist after transformation','shape':prices.shape}
+        return fail_trial('Nan pipeline: No prices exist after transformation', shape=prices.shape)
 
     # make all column names unique
     dup_cols = prices.columns.get_duplicates()
@@ -90,16 +99,16 @@ def do_fit_predict(params):
 
     ### TODO ### More sophisticated CV model checking
     if len(cv_split) != len(cv_model):
-        return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: does not match model split count', 'split_len': len(cv_split), 'model_len': len(cv_model)}
+        return fail_trial('CV invalid: does not match model split count', split_len=len(cv_split), model_len=len(cv_model))
 
     for i, ((train, test), (train_model, test_model)) in enumerate(zip(cv_split, cv_model)):
         # validate CV
         print('CV {} size: {}, {}'.format(i, len(train), len(test))) ##############
         if len(train) == 0 or len(test) == 0:
-            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: set size is 0', 'train_len': len(train), 'test_len': len(test)}
+            return fail_trial('CV invalid: set size is 0', train_len=len(train), test_len=len(test))
 
         if len(test) != len(test_model):
-            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: test len does not match model', 'test_len': len(test), 'model_len': len(test_model)}
+            return fail_trial('CV invalid: test len does not match model', test_len=len(test), model_len=len(test_model))
 
         X_train, X_test, y_train, y_test = prices.iloc[train], prices.iloc[test], target.iloc[train], target.iloc[test]
         y_model = target_trade.iloc[test_model]
@@ -108,7 +117,7 @@ def do_fit_predict(params):
         test_counts, model_counts = y_test.value_counts().to_dict(), y_model.value_counts().to_dict()
         print('CV {} freqs: {} | Model freqs: {}'.format(i, test_counts, model_counts))
         if test_counts != model_counts:
-            return {'status': hp.STATUS_FAIL, 'msg': 'CV invalid: test freqs do not match model', 'test_freqs': test_counts, 'model_freqs': model_counts}
+            return fail_trial('CV invalid: test freqs do not match model', test_freqs=test_counts, model_freqs=model_counts)
 
         # fit, predict
         print('Fitting') ##############
@@ -151,6 +160,8 @@ def do_fit_predict(params):
     out = {
         'status': hp.STATUS_OK
         , 'loss': loss
+        , 'id': str(uuid.uuid4())
+        , 'date': str(datetime.datetime.now())
         , 'trade_stats': trade_stats
         , 'pnl': pnl
         , 'accuracy': acc

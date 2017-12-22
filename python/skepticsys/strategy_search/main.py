@@ -13,33 +13,50 @@ from io import StringIO
 from time import time
 import pickle
 import signal
+from hyperopt.mongoexp import MongoTrials
 
 def main(args=None):
     # get space schema
     space_args = get_space_args(args)
     space = get_space(space_args)
 
+    # get trials
+    trials = load_trials(args.fmin_trials, mongo_key=args.mongo_key, reset_trials=args.fmin_reset)
+
     if args.show_trials:
-        show_trials(trials_path=args.fmin_trials, best_path=args.fmin_best)
+        show_trials(trials=trials, best_path=args.fmin_best)
     elif args.fmin:
-        do_fmin(space, limit=args.sample_count, reset_trials=args.fmin_reset, trials_path=args.fmin_trials, best_path=args.fmin_best)
+        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_path=args.fmin_best)
     else:
         # sample and print
-        sample = get_sample(space, limit=args.sample_count, params=args.eval_params)
+        sample = get_sample(space, limit=args.sample_count, trials=trials if args.eval_trials else None, params=args.eval_params)
         if args.show_sample:
             print_sample(sample)
 
         # eval
-        if args.eval:
+        if args.eval or bool(args.eval_trials) or bool(args.eval_params):
             results = eval_sample(sample)
 
-def get_sample(space, limit=10, params=None):
-    if params is not None and (params.endswith('.p') or params.endswith('.pkl') or params.endswith('.pickle')) and os.path.isfile(params):
-        trials = pickle.load(open(params, 'rb'))
-        if len(trials) > 0:
+def load_trials(trials_path, mongo_key=None, reset_trials=False):
+    is_mongo = trials_path.startswith('mongo:')
+    if is_mongo:
+        return MongoTrials(trials_path, exp_key=mongo_key)
+    else:
+        if trials_path is not None and os.path.isfile(trials_path) and not reset_trials:
+            return pickle.load(open(trials_path, 'rb'))
+        else:
+            return Trials()
+
+def show_trials(trials, best_path='test_best.yml'):
+    handle_trials(trials, trials_path=None, best_path=best_path)
+
+def get_sample(space, limit=10, trials=None, params=None):
+    if trials is not None:
+        ok_count = len([t for t in trials.trials if t['result']['status'] == STATUS_OK])
+        if ok_count > 0:
             params = trials.argmin
         else:
-            raise ValueError('Trials does not have any samples.')
+            raise ValueError('Trials does not have any samples.') 
     else:
         params = load_yaml(params)
 
@@ -55,14 +72,6 @@ def print_sample(sample):
     for i in range(len(sample)):
         print('%s | Input | %s' % (i, '='*80))
         pprint.pprint(sample[i])
-
-def show_trials(trials_path = 'test_trials.p', best_path='test_best.yml'):
-    if trials_path is not None and os.path.isfile(trials_path):
-        trials = pickle.load(open(trials_path, 'rb'))
-    else:
-        trials = Trials()
-    
-    handle_trials(trials, trials_path=None, best_path=best_path)
 
 def eval_sample(sample, do_print=True):
     results = []
@@ -86,12 +95,7 @@ def eval_sample(sample, do_print=True):
 
     return results
 
-def do_fmin(space, limit=100, reset_trials=False, trials_path='test_trials.p', best_path='test_best.yml', show_trials_only=False):
-    if trials_path is not None and os.path.isfile(trials_path) and not reset_trials:
-        trials = pickle.load(open(trials_path, 'rb'))
-    else:
-        trials = Trials()
-
+def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_path='test_best.yml', show_trials_only=False):
     master_start_time = time()
 
     def sigint_handler():
@@ -114,6 +118,8 @@ def do_fmin(space, limit=100, reset_trials=False, trials_path='test_trials.p', b
     handle_trials(trials, best=best, trials_path=trials_path, best_path=best_path, master_start_time=master_start_time)
 
 def handle_trials(trials, best=None, trials_path='test_trials.p', best_path='test_best.yml', master_start_time=None):
+    is_mongo = trials_path.startswith('mongo:') if isinstance(trials_path, str) else False
+
     if master_start_time is not None:
         master_bench = time() - master_start_time
         m, s = divmod(master_bench,60)
@@ -128,7 +134,7 @@ def handle_trials(trials, best=None, trials_path='test_trials.p', best_path='tes
         if best is None:
             best = trials.argmin
 
-    if trials_path is not None and len(trials) > 0:
+    if not is_mongo and trials_path is not None and len(trials) > 0:
         pickle.dump(trials, open(trials_path, 'wb'))
 
     if best_path is not None and best is not None:
@@ -219,28 +225,34 @@ def str_or_none(x):
 def get_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--candidates', '-s', dest='sample_count', type=int, default=1
-        , help='Number of candidates to sample in --eval or --fmin.')
-
-    parser.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default='test_trials.p')
-    parser.add_argument('--save-best', '-sb', dest='fmin_best', type=str_or_none, default=None
-        , help='Path to save best candidate in fmin or --show-trials')
+    parser.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default='test_trials.p'
+        , help='Path to file or mongo URI')
+    parser.add_argument('--mongo-key', '-md', dest='mongo_key', type=str, default=None
+        , help='Experiment key to read')
 
     parser.add_argument('--fmin', '-f', action='store_true', default=False
         , help='Run fmin optimizer')
-    parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
-        , help='If --trials-path exists, do not load it for fmin.')
 
     parser.add_argument('--eval', '-e', action='store_true', default=False
         , help='Run a randomly generated sample(s), up to --candidates.')
+    parser.add_argument('--eval-trials', '-et', dest='eval_trials', action='store_true', default=False
+        , help='Eval best candidate from --trials-path.')
     parser.add_argument('--eval-params', '-ep', dest='eval_params', type=str, default=None
         , help='Pre-existing params to load for eval. Can be trials pickle (.p, .pkl, .pickle) or YAML.')
 
+    parser.add_argument('--candidates', '-s', dest='sample_count', type=int, default=1
+        , help='Number of candidates to sample in --eval or --fmin.')
+
     parser.add_argument('--show-trials', '-st', dest='show_trials', action='store_true', default=False
         , help='Show trials statistics from --trials-path')
-
     parser.add_argument('--show-sample', '-ss', dest='show_sample', action='store_true', default=False
         , help='Print randomly generated or loaded sample(s)')
+
+    parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
+        , help='If --trials-path exists, do not load it for fmin. Has no effect if using MongoDB.')
+
+    parser.add_argument('--save-best', '-sb', dest='fmin_best', type=str_or_none, default=None
+        , help='Path to save best candidate in fmin or --show-trials')
 
     parser.add_argument('--space-config', '-sc', dest='space_config', type=str, default=None)
     parser.add_argument('--data-config', '-dc', dest='data_config', type=str, default=None)
