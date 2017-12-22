@@ -8,14 +8,18 @@ from xgboost import XGBClassifier
 import random
 import sklearn.metrics as skm
 from sklearn.utils.sparsefuncs import count_nonzero
+import backtrader as bt
 
 # parent submodules
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cross_validation import SingleSplit, WindowSplit
+from metrics import BacktraderScorer
+from trading import SeriesStrategy, BasicTradeStats
 from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer, NanSampler
 from datasets import load_prices, get_target
 from pipeline import make_union
+from utils import arr_to_datetime
 sys.path.pop(0)
 # end parent submodules
 
@@ -127,9 +131,29 @@ def do_fit_predict(params):
     acc = skm.accuracy_score(y_test, y_pred)
     precision, recall, fscore, support = skm.precision_recall_fscore_support(y_test, y_pred)
 
+    # prep backtrader score
+    end_offset = params['data__params']['end_target']
+
+    try:
+        start_loc = prices_trade.index.get_loc(y_test.index[0])
+    except KeyError:
+        start_loc = 0
+    try:
+        end_loc = min(prices_trade.index.get_loc(y_test.index[-1])-end_offset, len(prices_trade)-1)
+    except KeyError:
+        end_loc = len(prices_trade)-1
+
+    y_prices = prices_trade.iloc[start_loc:end_loc+1,:]
+
+    pnl, trade_stats = do_backtest(y_pred, y_test, y_prices)
+    loss = -acc # -pnl
+
     out = {
         'status': hp.STATUS_OK
-        , 'loss': -acc
+        , 'loss': loss
+        , 'trade_stats': trade_stats
+        , 'pnl': pnl
+        , 'accuracy': acc
         , 'precision': list(precision if precision is not None else [])
         , 'recall': list(recall if recall is not None else [])
         #, 'fscore': list(fscore if fscore is not None else [])
@@ -269,3 +293,33 @@ def do_classifier(
         return make_pipeline(*[master_pieces[k] for k in sorted(list(master_pieces))])
     else:
         return None
+
+def do_backtest(
+    y_pred, y_true, y_prices
+    , initial_balance = 100000.
+):
+    y_prices = arr_to_datetime(y_prices, y_true=y_true)
+    
+    # make cerebro for BacktraderScorer
+    cerebro = bt.Cerebro()
+    cerebro.broker.set_cash(initial_balance)
+    data = bt.feeds.PandasData(dataname=y_prices, openinterest=None)
+    data2 = bt.feeds.PandasData(dataname=y_prices, openinterest=None)
+    cerebro.adddata(data, name='LongFeed')
+    cerebro.adddata(data2, name='ShortFeed')
+    cerebro.addanalyzer(BasicTradeStats, useStandardPrint=True, useStandardDict=True, _name='BasicStats')
+
+    # make scorers
+    bts = BacktraderScorer(cerebro
+        , SeriesStrategy, 'signals', strategy_kwargs={'tradeintervalbars':0, 'tradeexpirebars':60, 'stake':1}
+        , analyzer_name='BasicStats', analysis_key=[] #['all','stats','kellyPercent']
+        , initial_cash=initial_balance
+    )
+
+    # get score
+    results = bts._bt_score(y_pred, y_true=y_true)
+    results['won'].pop('streak')
+    results['lost'].pop('streak')
+    pnl = results['all']['pnl']['total']
+
+    return pnl, results

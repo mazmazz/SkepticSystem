@@ -1,6 +1,6 @@
 from space import get_space
 from candidate import do_candidate
-from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 from talib import MA_Type
 import hyperopt.pyll.stochastic
 import numpy as np
@@ -12,26 +12,41 @@ import yaml
 from io import StringIO
 from time import time
 import pickle
+import signal
 
 def main(args=None):
     # get space schema
     space_args = get_space_args(args)
     space = get_space(space_args)
 
-    if args.fmin:
+    if args.show_trials:
+        show_trials(trials_path=args.fmin_trials, best_path=args.fmin_best)
+    elif args.fmin:
         do_fmin(space, limit=args.sample_count, reset_trials=args.fmin_reset, trials_path=args.fmin_trials, best_path=args.fmin_best)
+    else:
+        # sample and print
+        sample = get_sample(space, limit=args.sample_count, params=args.eval_params)
+        if args.show_sample:
+            print_sample(sample)
 
-    # sample and print
-    sample = get_sample(space, limit=args.sample_count)
-    if not args.suppress_sample:
-        print_sample(sample)
+        # eval
+        if args.eval:
+            results = eval_sample(sample)
 
-    # eval
-    if args.eval:
-        results = eval_sample(sample)
+def get_sample(space, limit=10, params=None):
+    if params is not None and (params.endswith('.p') or params.endswith('.pkl') or params.endswith('.pickle')) and os.path.isfile(params):
+        trials = pickle.load(open(params, 'rb'))
+        if len(trials) > 0:
+            params = trials.argmin
+        else:
+            raise ValueError('Trials does not have any samples.')
+    else:
+        params = load_yaml(params)
 
-def get_sample(space, limit=10):
-    return [hyperopt.pyll.stochastic.sample(space) for i in range(limit)]
+    if params is not None:
+        return [space_eval(space, params)]
+    else:
+        return [hyperopt.pyll.stochastic.sample(space) for i in range(limit)]
 
 def print_sample(sample):
     if not isinstance(sample, list):
@@ -40,6 +55,14 @@ def print_sample(sample):
     for i in range(len(sample)):
         print('%s | Input | %s' % (i, '='*80))
         pprint.pprint(sample[i])
+
+def show_trials(trials_path = 'test_trials.p', best_path='test_best.yml'):
+    if trials_path is not None and os.path.isfile(trials_path):
+        trials = pickle.load(open(trials_path, 'rb'))
+    else:
+        trials = Trials()
+    
+    handle_trials(trials, trials_path=None, best_path=best_path)
 
 def eval_sample(sample, do_print=True):
     results = []
@@ -52,8 +75,8 @@ def eval_sample(sample, do_print=True):
 
         if do_print:
             bench = end_time-start_time
-            print('%s | Output | %s | %02d:%08.5f' % ((i, '='*48)+divmod(bench, 60))) #mins, secs
-            pprint.pprint(result)
+            #print('%s | Output | %s | %02d:%08.5f' % ((i, '='*48)+divmod(bench, 60))) #mins, secs
+            #pprint.pprint(result)
 
     if do_print:
         master_bench = time() - master_start_time
@@ -63,32 +86,98 @@ def eval_sample(sample, do_print=True):
 
     return results
 
-def do_fmin(space, limit=100, reset_trials=False, trials_path='test_trials.p', best_path='test_best.yml'):
-    master_start_time = time()
-
-    if os.path.isfile(trials_path) and not reset_trials:
+def do_fmin(space, limit=100, reset_trials=False, trials_path='test_trials.p', best_path='test_best.yml', show_trials_only=False):
+    if trials_path is not None and os.path.isfile(trials_path) and not reset_trials:
         trials = pickle.load(open(trials_path, 'rb'))
     else:
         trials = Trials()
-    best = fmin(do_candidate, space=space, algo=tpe.suggest, max_evals=limit, trials=trials)
 
-    master_bench = time() - master_start_time
-    m, s = divmod(master_bench,60)
-    h, _ = divmod(m, 60)
-    print('Total time: %03d:%02d:%08.5f' % (h,m,s)) #hrs, mins, secs
-    print('Lowest loss: {}'.format(min([t for t in trials.losses() if t is not None])))
-    print('Average best error: {}'.format(trials.average_best_error()))
+    master_start_time = time()
 
-    if trials_path is not None:
+    def sigint_handler():
+        print('Interrupting...')
+        handle_trials(trials, trials_path=trials_path, best_path=best_path, master_start_time=master_start_time)
+        return
+    
+    # sigint handler to workaround scipy ctrl+c crash
+    handler = handle_ctrl()
+
+    try:
+        best = fmin(do_candidate, space=space, algo=tpe.suggest, max_evals=limit, trials=trials)
+    except KeyboardInterrupt:
+        sigint_handler()
+        unhandle_result = unhandle_ctrl(handler)
+        return
+
+    unhandle_result = unhandle_ctrl(handler)
+
+    handle_trials(trials, best=best, trials_path=trials_path, best_path=best_path, master_start_time=master_start_time)
+
+def handle_trials(trials, best=None, trials_path='test_trials.p', best_path='test_best.yml', master_start_time=None):
+    if master_start_time is not None:
+        master_bench = time() - master_start_time
+        m, s = divmod(master_bench,60)
+        h, _ = divmod(m, 60)
+        print('Total time: %03d:%02d:%08.5f' % (h,m,s)) #hrs, mins, secs
+    
+    ok_count = len([t for t in trials.trials if t['result']['status'] == STATUS_OK])
+    print('Trials count: {} ({} ok)'.format(len(trials), ok_count))
+    if ok_count > 0:
+        print('Lowest loss: {}'.format(min([t for t in trials.losses() if t is not None])))
+        print('Average best error: {}'.format(trials.average_best_error()))
+        if best is None:
+            best = trials.argmin
+
+    if trials_path is not None and len(trials) > 0:
         pickle.dump(trials, open(trials_path, 'wb'))
 
-    if best_path is not None:
+    if best_path is not None and best is not None:
         with open(best_path, 'w') as f:
             yaml.dump(best, f, default_flow_style=False)
 
     print('Finished, saved to {}, {}'.format(trials_path, best_path)) #: {}'.format(best))
 
-    import pdb; pdb.set_trace()
+def handle_ctrl(hook_sigint=None):
+    if os.name != 'nt':
+        import signal
+        original_sigint_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, hook_sigint)
+        return original_sigint_handler
+    else:
+        # work around scipy's SIGINT handling: https://stackoverflow.com/a/15472811
+        import imp
+        import ctypes
+        import _thread
+        import win32api
+
+        if hook_sigint is None:
+            hook_sigint = _thread.interrupt_main
+
+        # Load the DLL manually to ensure its handler gets
+        # set before our handler.
+        #basepath = imp.find_module('numpy')[1]
+        #ctypes.CDLL(os.path.join(basepath, 'core', 'libmmd.dll'))
+        #ctypes.CDLL(os.path.join(basepath, 'core', 'libifcoremd.dll'))
+        import numpy as np
+
+        # Now set our handler for CTRL_C_EVENT. Other control event 
+        # types will chain to the next handler.
+        def handler(dwCtrlType, hook_sigint=hook_sigint):
+            if dwCtrlType == 0: # CTRL_C_EVENT
+                hook_sigint()
+                return 1 # don't chain to the next handler
+            return 0 # chain to the next handler
+
+        win32api.SetConsoleCtrlHandler(handler, 1)
+        return handler
+
+def unhandle_ctrl(handler):
+    if os.name != 'nt':
+        signal.signal(signal.SIGINT, handler)
+        return 1
+    else:
+        import win32api
+        return win32api.SetConsoleCtrlHandler(handler, 0)
 
 def get_space_args(args):
     if args.space_config is not None:
@@ -124,18 +213,34 @@ def load_yaml(value):
     
     return yo
 
+def str_or_none(x):
+    return None if x.lower() == 'none' else str(x)
+
 def get_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--suppress-sample', '-ss', dest='suppress_sample', action='store_true', default=False)
+    parser.add_argument('--candidates', '-s', dest='sample_count', type=int, default=1
+        , help='Number of candidates to sample in --eval or --fmin.')
 
-    parser.add_argument('--sample', '-s', dest='sample_count', type=int, default=1)
-    parser.add_argument('--eval', '-e', action='store_true', default=False)
+    parser.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default='test_trials.p')
+    parser.add_argument('--save-best', '-sb', dest='fmin_best', type=str_or_none, default=None
+        , help='Path to save best candidate in fmin or --show-trials')
 
-    parser.add_argument('--fmin', '-f', action='store_true', default=False)
-    parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False)
-    parser.add_argument('--fmin-trials', '-ft', dest='fmin_trials', type=str, default='test_trials.p')
-    parser.add_argument('--fmin-best', '-fb', dest='fmin_best', type=str, default='test_best.yml')
+    parser.add_argument('--fmin', '-f', action='store_true', default=False
+        , help='Run fmin optimizer')
+    parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
+        , help='If --trials-path exists, do not load it for fmin.')
+
+    parser.add_argument('--eval', '-e', action='store_true', default=False
+        , help='Run a randomly generated sample(s), up to --candidates.')
+    parser.add_argument('--eval-params', '-ep', dest='eval_params', type=str, default=None
+        , help='Pre-existing params to load for eval. Can be trials pickle (.p, .pkl, .pickle) or YAML.')
+
+    parser.add_argument('--show-trials', '-st', dest='show_trials', action='store_true', default=False
+        , help='Show trials statistics from --trials-path')
+
+    parser.add_argument('--show-sample', '-ss', dest='show_sample', action='store_true', default=False
+        , help='Print randomly generated or loaded sample(s)')
 
     parser.add_argument('--space-config', '-sc', dest='space_config', type=str, default=None)
     parser.add_argument('--data-config', '-dc', dest='data_config', type=str, default=None)

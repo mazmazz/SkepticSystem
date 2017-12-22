@@ -203,9 +203,9 @@ def _tulip_indicator(name, prices, input_names=None, nan_offset=0, **kwargs):
             arr = _pad_array(result[j] if isinstance(result, tuple) else result, nan_offset, len(prices))
             
             ### DEBUG ###
-            if col_name in output:
-                print('DEBUG: col_name already exists in output')
-                import pdb; pdb.set_trace()
+            # if col_name in output:
+            #     print('DEBUG: col_name already exists in output')
+            #     import pdb; pdb.set_trace()
             
             output[col_name] = (
                 pd.Series(arr, index=prices.index) if is_pandas
