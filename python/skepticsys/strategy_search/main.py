@@ -24,9 +24,9 @@ def main(args=None):
     trials = load_trials(args.fmin_trials, mongo_key=args.mongo_key, reset_trials=args.fmin_reset)
 
     if args.show_trials:
-        show_trials(trials=trials, best_path=args.fmin_best)
+        show_trials(trials=trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path)
     elif args.fmin:
-        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_path=args.fmin_best)
+        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path)
     else:
         # sample and print
         sample = get_sample(space, limit=args.sample_count, trials=trials if args.eval_trials else None, params=args.eval_params)
@@ -47,8 +47,8 @@ def load_trials(trials_path, mongo_key=None, reset_trials=False):
         else:
             return Trials()
 
-def show_trials(trials, best_path='test_best.yml'):
-    handle_trials(trials, trials_path=None, best_path=best_path)
+def show_trials(trials, best_params_path='test_best-params.yml', best_result_path='test_best-result.yml'):
+    handle_trials(trials, trials_path=None, best_params_path=best_params_path, best_result_path=best_result_path)
 
 def get_sample(space, limit=10, trials=None, params=None):
     if trials is not None:
@@ -95,19 +95,19 @@ def eval_sample(sample, do_print=True):
 
     return results
 
-def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_path='test_best.yml', show_trials_only=False):
+def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_trials_only=False):
     master_start_time = time()
 
     def sigint_handler():
         print('Interrupting...')
-        handle_trials(trials, trials_path=trials_path, best_path=best_path, master_start_time=master_start_time)
+        handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=master_start_time)
         return
     
     # sigint handler to workaround scipy ctrl+c crash
     handler = handle_ctrl()
 
     try:
-        best = fmin(do_candidate, space=space, algo=tpe.suggest, max_evals=limit, trials=trials)
+        best_params = fmin(do_candidate, space=space, algo=tpe.suggest, max_evals=limit, trials=trials)
     except KeyboardInterrupt:
         sigint_handler()
         unhandle_result = unhandle_ctrl(handler)
@@ -115,9 +115,9 @@ def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_path='te
 
     unhandle_result = unhandle_ctrl(handler)
 
-    handle_trials(trials, best=best, trials_path=trials_path, best_path=best_path, master_start_time=master_start_time)
+    handle_trials(trials, best_params=best_params, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=master_start_time)
 
-def handle_trials(trials, best=None, trials_path='test_trials.p', best_path='test_best.yml', master_start_time=None):
+def handle_trials(trials, best_params=None, best_result=None, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', master_start_time=None):
     is_mongo = trials_path.startswith('mongo:') if isinstance(trials_path, str) else False
 
     if master_start_time is not None:
@@ -131,17 +131,28 @@ def handle_trials(trials, best=None, trials_path='test_trials.p', best_path='tes
     if ok_count > 0:
         print('Lowest loss: {}'.format(min([t for t in trials.losses() if t is not None])))
         print('Average best error: {}'.format(trials.average_best_error()))
-        if best is None:
-            best = trials.argmin
+        if best_params is None:
+            best_params = trials.argmin
+        if best_result is None:
+            best_result = trials.best_trial
+            if 'result' in best_result:
+                best_result = best_result['result']
+                pprint.pprint(best_result)
+            else:
+                best_result = None
 
     if not is_mongo and trials_path is not None and len(trials) > 0:
         pickle.dump(trials, open(trials_path, 'wb'))
 
-    if best_path is not None and best is not None:
-        with open(best_path, 'w') as f:
-            yaml.dump(best, f, default_flow_style=False)
+    if best_params_path is not None and best_params is not None:
+        with open(best_params_path, 'w') as f:
+            yaml.dump(best_params, f, default_flow_style=False)
 
-    print('Finished, saved to {}, {}'.format(trials_path, best_path)) #: {}'.format(best))
+    if best_result_path is not None and best_result is not None:
+        with open(best_result_path, 'w') as f:
+            f.write(pprint.pformat(best_result))
+
+    print('Finished, saved to {}, {}, {}'.format(trials_path, best_params_path, best_result_path)) #: {}'.format(best))
 
 def handle_ctrl(hook_sigint=None):
     if os.name != 'nt':
@@ -206,6 +217,9 @@ def get_space_args(args):
             , 'classifier__args': load_yaml(args.classifier_config) or {
 
             }
+            , 'cv__args': load_yaml(args.cv_config) or {
+                'single_split': args.single_split
+            }
         }
         return space_args
 
@@ -251,25 +265,31 @@ def get_args():
     parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
         , help='If --trials-path exists, do not load it for fmin. Has no effect if using MongoDB.')
 
-    parser.add_argument('--save-best', '-sb', dest='fmin_best', type=str_or_none, default=None
-        , help='Path to save best candidate in fmin or --show-trials')
+    parser.add_argument('--save-best-params', '-sbp', dest='best_params_path', type=str_or_none, default=None
+        , help='Path to save best candidate in fmin or --show-trials.')
+    parser.add_argument('--save-best-result', '-sbr', dest='best_result_path', type=str_or_none, default=None
+        , help='Path to save best trial result.')
 
     parser.add_argument('--space-config', '-sc', dest='space_config', type=str, default=None)
     parser.add_argument('--data-config', '-dc', dest='data_config', type=str, default=None)
     parser.add_argument('--indi-config', '-ic', dest='indicator_config', type=str, default=None)
     parser.add_argument('--classifier-config', '-cc', dest='classifier_config', type=str, default=None)
+    parser.add_argument('--cv-config', '-vc', dest='cv_config', type=str, default=None)
 
     # data parameters
     parser.add_argument('--instruments', '-di', dest='data_instruments', type=str, nargs='+', default=['USDJPY'])
     parser.add_argument('--granularities', '-dg', dest='data_granularities', type=str, nargs='+', default=['H1'])
-    parser.add_argument('--start-index', '-dsi', dest='data_start_index', type=str, default=None)
-    parser.add_argument('--end-index', '-dei', dest='data_end_index', type=str, default=None)
+    parser.add_argument('--start-index', '-dsi', dest='data_start_index', type=int, default=None) ### TODO ### supposed to be str
+    parser.add_argument('--end-index', '-dei', dest='data_end_index', type=int, default=None) ### TODO ### supposed to be str
     parser.add_argument('--sample-len', '-dsl', dest='data_sample_len', type=int, default=-12000)
     parser.add_argument('--source', '-ds', dest='data_source', type=str, default='csv')
     parser.add_argument('--dir', '-dd', dest='data_dir', type=str, default='D:\\Projects\\Prices'
         , help='Dir of CSV prices')
     parser.add_argument('--end-target', '-de', dest='data_end_target', type=int, default=-61
         , help='End offset of price target')
+
+    # cv parameters
+    parser.add_argument('--single-split', '-sp', dest='single_split', type=int, default=100)
 
     return parser.parse_args()
 

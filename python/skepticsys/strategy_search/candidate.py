@@ -46,7 +46,7 @@ def fail_trial(msg, **data):
 def do_fit_predict(params):
     #setup
     nans = NanSampler(drop_inf=False)
-    cv = SingleSplit(test_size=100)
+    cv = SingleSplit(test_size=params['cv__params']['single_split'])
     print('='*48)
 
     # load prices
