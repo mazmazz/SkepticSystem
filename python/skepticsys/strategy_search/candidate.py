@@ -30,6 +30,7 @@ def do_candidate(params):
         return do_fit_predict(params)
     except Exception as e:
         # https://stackoverflow.com/a/1278740
+        #raise e
         fname = os.path.split(sys.exc_info()[-1].tb_frame.f_code.co_filename)[1]
         msg = '%s, %s, %s | %s' % (sys.exc_info()[0].__name__, fname, sys.exc_info()[-1].tb_lineno, str(e))
         out = fail_trial('Exception: %s'%(msg))
@@ -46,7 +47,7 @@ def fail_trial(msg, **data):
 def do_fit_predict(params):
     #setup
     nans = NanSampler(drop_inf=False)
-    cv = SingleSplit(test_size=params['cv__params']['single_split'])
+    cv = get_cv(**params['cv__params'])
     print('='*48)
 
     # load prices
@@ -139,6 +140,8 @@ def do_fit_predict(params):
 
     acc = skm.accuracy_score(y_test, y_pred)
     precision, recall, fscore, support = skm.precision_recall_fscore_support(y_test, y_pred)
+    brier = skm.brier_score_loss(y_test, y_df.iloc[:,1])
+    logloss = skm.log_loss(y_test, y_df)
 
     # prep backtrader score
     end_offset = params['data__params']['end_target']
@@ -155,7 +158,7 @@ def do_fit_predict(params):
     y_prices = prices_trade.iloc[start_loc:end_loc+1,:]
 
     pnl, trade_stats = do_backtest(y_pred, y_test, y_prices)
-    loss = -acc # -pnl
+    loss = logloss #-acc # brier # -pnl
 
     out = {
         'status': hp.STATUS_OK
@@ -164,6 +167,8 @@ def do_fit_predict(params):
         , 'date': str(datetime.datetime.now())
         , 'trade_stats': trade_stats
         , 'pnl': pnl
+        , 'brier': brier
+        , 'logloss': logloss
         , 'accuracy': acc
         , 'precision': list(precision if precision is not None else [])
         , 'recall': list(recall if recall is not None else [])
@@ -334,3 +339,11 @@ def do_backtest(
     pnl = results['all']['pnl']['total']
 
     return pnl, results
+
+def get_cv(**cv_params):
+    if 'cv' in cv_params:
+        return cv_params['cv'](**cv_params['params'])
+    elif 'single_split' in cv_params:
+        return SingleSplit(test_size=cv_params['single_split'])
+    else:
+        return None

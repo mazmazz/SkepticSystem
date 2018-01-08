@@ -10,11 +10,11 @@ def _get_size(n_samples, size, neg_mode='pass'):
 
         if size < 0:
             if neg_mode == 'subtract':
-                return n_samples+size
+                size = n_samples+size
             else: # neg_mode == 'pass':
-                return size
-    
-    return size
+                size = size 
+
+        return int(size)
 
 class SingleSplit(BaseCrossValidator):
     """Single split cross-validator.
@@ -28,17 +28,17 @@ class SingleSplit(BaseCrossValidator):
     ----------
     test_size: int or float, default=0.1
         Size of test set. If this is a fraction between 0 and 1, size is figured
-        from the proportion of sample size, dependent on `initial_index`
+        from the proportion of sample size, dependent on `initial_train_index`
 
-    initial_index: int or float, default=0
+    initial_train_index: int or float, default=0
         Initial index of train series. This may determine both train and test
-        size, if `test_size` is a fraction. If `initial_index` is a fraction
+        size, if `test_size` is a fraction. If `initial_train_index` is a fraction
         between 0 and 1, size is figured from the proportion of total sample
         size.
     """
-    def __init__(self, test_size=0.1, initial_index=0):
+    def __init__(self, test_size=0.1, initial_train_index=0):
         self.test_size = test_size
-        self.initial_index = initial_index
+        self.initial_train_index = initial_train_index
     
     def split(self, X, y=None, groups=None):
         """Generate indices to split data into training and test set.
@@ -65,12 +65,12 @@ class SingleSplit(BaseCrossValidator):
         """
         X, y, groups = indexable(X, y, groups)
         n_samples = _num_samples(X)
-        initial_index = max(0, _get_size(n_samples, self.initial_index, neg_mode='subtract'))
+        initial_train_index = max(0, _get_size(n_samples, self.initial_train_index, neg_mode='subtract'))
         final_index = n_samples
-        test_size = _get_size(n_samples-initial_index, self.test_size, neg_mode='subtract')
+        test_size = _get_size(n_samples-initial_train_index, self.test_size, neg_mode='subtract')
         
         indices = np.arange(n_samples)
-        train = indices[initial_index:-test_size]
+        train = indices[initial_train_index:-test_size]
         test  = indices[-test_size:final_index]
 
         yield train, test
@@ -114,7 +114,7 @@ class WindowSplit(BaseCrossValidator):
         is figured from the proportion of sample size. If this is set to `None`,
         train set will be expanding.
 
-    initial_index : int, default=0
+    initial_test_index : int, default=0
         Index of the first sample for the initial test set. If this is a fraction 
         between 0 and 1 or 0 and -1, index is found at the proportion of sample size.
         If this is a negative number, subtract the amount from sample size.
@@ -133,17 +133,17 @@ class WindowSplit(BaseCrossValidator):
 
     force_sliding_min: bool, default=True
         If `sliding_size` is set, force the first train set to be of `sliding_size`.
-        This overrides `initial_index` if `initial_index` is less than `sliding_size`.
+        This overrides `initial_test_index` if `initial_test_index` is less than `sliding_size`.
 
     test_remainder : bool, default=False
         Allow last split if test set size is smaller than `test_size` and at least 1.
     """
-    def __init__(self, test_size=1, step_size=1, delay_size=0, sliding_size=None, initial_index=0, final_index=None, min_test_size=None, force_sliding_min=True, test_remainder=False):
+    def __init__(self, test_size=1, step_size=1, delay_size=0, sliding_size=None, initial_test_index=0, final_index=None, min_test_size=None, force_sliding_min=True, test_remainder=False):
         self.test_size = test_size
         self.step_size = step_size
         self.delay_size = delay_size
         self.sliding_size = sliding_size
-        self.initial_index = initial_index
+        self.initial_test_index = initial_test_index
         self.final_index = final_index
         self.min_test_size = min_test_size
         self.force_sliding_min = force_sliding_min
@@ -185,29 +185,29 @@ class WindowSplit(BaseCrossValidator):
         step_size = _get_size(n_samples, self.step_size)
         delay_size = _get_size(n_samples, self.delay_size)
         sliding_size = _get_size(n_samples, self.sliding_size)
-        initial_index = _get_size(n_samples, self.initial_index, neg_mode='subtract')
+        initial_test_index = _get_size(n_samples, self.initial_test_index, neg_mode='subtract')
         final_index = _get_size(n_samples, self.final_index, neg_mode='subtract')
         min_test_size = _get_size(n_samples, self.min_test_size)
         test_remainder = self.test_remainder
         force_sliding_min = self.force_sliding_min
         test_expanding = test_size is None
-        self._do_validation(n_samples, step_size, initial_index)
+        self._do_validation(n_samples, step_size, initial_test_index)
 
         if not final_index is None and final_index < n_samples:
             n_samples = final_index
 
         indices = np.arange(n_samples)
         if not sliding_size is None and force_sliding_min:
-            i = max(sliding_size-1, initial_index-1)
+            i = max(sliding_size-1, initial_test_index-1) # TODO: if initial_test_index is train set: max(sliding_size-1, (initial_test_index+sliding_size)-1)
         else: # sliding window
-            i = max(0, initial_index-1)
+            i = max(0, initial_test_index-1)
         remainder_run = False
         while True:
             if sliding_size is None: # expanding window
-                train_start, train_end = 0, i+1
+                train_start, train_end = 0, i+1 # TODO: if initial_test_index is train set: initial_test_index, i+1
                 test_start , test_end  = i+1+delay_size, n_samples if test_expanding else (i+1+delay_size)+test_size
             else: # sliding window
-                train_start, train_end = max(0, i-sliding_size+1), i+1
+                train_start, train_end = max(0, i-sliding_size+1), i+1 # TODO: if initial_test_index is train set: max(initial_test_index, i-sliding_size+1)
                 test_start , test_end  = i+1+delay_size, n_samples if test_expanding else (i+1+delay_size)+test_size
             
             if (not test_remainder and test_end > n_samples) \
@@ -215,7 +215,7 @@ class WindowSplit(BaseCrossValidator):
                 or test_end-test_start <= 0 \
                 or (test_expanding and not min_test_size is None and test_end-test_start < min_test_size):
                 break
-
+            
             train = indices[train_start:train_end]
             test  = indices[test_start:min(test_end, n_samples)]
 
@@ -235,10 +235,10 @@ class WindowSplit(BaseCrossValidator):
         # I've only seen this for test suites, so pass a fake number
         return 2
 
-    def _do_validation(self, n_samples, step_size, initial_index):
+    def _do_validation(self, n_samples, step_size, initial_test_index):
         if step_size < 1:
             raise ValueError('step_size must be greater than zero.')
             
-        if initial_index < 0:
-            raise ValueError('initial_index must be positive.')
+        if initial_test_index < 0:
+            raise ValueError('initial_test_index must be positive.')
             

@@ -1,4 +1,5 @@
 from hyperopt import hp
+from hyperopt.pyll.base import scope
 from talib import MA_Type
 from .defaults import default_indicators
 
@@ -55,8 +56,8 @@ def get_delta_space(indi, prefix, ma=False):
             , '_shift': hp.choice(indi+prefix+'__delta__diff__shift', [None, get_shift_space(indi, prefix+'__delta__diff')])
             , 'operation': 'diff'
             , 'start': 0
-            , 'stop': hp.quniform(indi+prefix+'__delta__diff__stop', 2, 15, 1)
-            , 'step': hp.quniform(indi+prefix+'__delta__diff__step', 1, 2, 1)
+            , 'stop': scope.int(hp.quniform(indi+prefix+'__delta__diff__stop', 2, 15, 1))
+            , 'step': scope.int(hp.quniform(indi+prefix+'__delta__diff__step', 1, 2, 1))
             , 'fixed_start': True # hp.choice(indi+prefix+'__delta__diff__fixed_start', [False,True])
         }])
         , '_percent': hp.choice(indi+prefix+'__delta__percent', [None, {
@@ -64,8 +65,8 @@ def get_delta_space(indi, prefix, ma=False):
             , '_shift': hp.choice(indi+prefix+'__delta__percent__shift', [None, get_shift_space(indi, prefix+'__delta__percent')])
             , 'operation': 'percent'
             , 'start': 0
-            , 'stop': hp.quniform(indi+prefix+'__delta__percent__stop', 2, 15, 1)
-            , 'step': hp.quniform(indi+prefix+'__delta__percent__step', 1, 2, 1)
+            , 'stop': scope.int(hp.quniform(indi+prefix+'__delta__percent__stop', 2, 15, 1))
+            , 'step': scope.int(hp.quniform(indi+prefix+'__delta__percent__step', 1, 2, 1))
             , 'fixed_start': True # hp.choice(indi+prefix+'__delta__percent__fixed_start', [False,True])
         }])
         , '_direction': hp.choice(indi+prefix+'__delta__direction', [None, {
@@ -73,8 +74,8 @@ def get_delta_space(indi, prefix, ma=False):
             , '_shift': hp.choice(indi+prefix+'__delta__direction__shift', [None, get_shift_space(indi, prefix+'__delta__direction')])
             , 'operation': 'direction'
             , 'start': 0
-            , 'stop': hp.quniform(indi+prefix+'__delta__direction__stop', 2, 15, 1)
-            , 'step': hp.quniform(indi+prefix+'__delta__direction__step', 1, 2, 1)
+            , 'stop': scope.int(hp.quniform(indi+prefix+'__delta__direction__stop', 2, 15, 1))
+            , 'step': scope.int(hp.quniform(indi+prefix+'__delta__direction__step', 1, 2, 1))
             , 'fixed_start': True # hp.choice(indi+prefix+'__delta__direction__fixed_start', [False,True])
         }])
     }
@@ -84,7 +85,7 @@ def get_delta_space(indi, prefix, ma=False):
 def get_shift_space(indi, prefix):
     space = {
         'start': 1
-        , 'stop': hp.quniform(indi+prefix+'__shift__stop', 2, 15, 1)
-        , 'step': 1 # hp.quniform(indi+prefix+'__shift__step', 1, 5, 1)
+        , 'stop': scope.int(hp.quniform(indi+prefix+'__shift__stop', 2, 15, 1))
+        , 'step': 1 # scope.int(hp.quniform(indi+prefix+'__shift__step', 1, 5, 1))
     }
     return hp.choice(indi+prefix+'__shift__params', [None, space])

@@ -38,7 +38,7 @@ def main(args=None):
             results = eval_sample(sample)
 
 def load_trials(trials_path, mongo_key=None, reset_trials=False):
-    is_mongo = trials_path.startswith('mongo:')
+    is_mongo = trials_path.startswith('mongo:') if isinstance(trials_path, str) else False
     if is_mongo:
         return MongoTrials(trials_path, exp_key=mongo_key)
     else:
@@ -60,9 +60,11 @@ def get_sample(space, limit=10, trials=None, params=None):
     else:
         params = load_yaml(params)
 
-    if params is not None:
+    if isinstance(params, dict) and len(params) > 0:
+        print('Loaded file')
         return [space_eval(space, params)]
     else:
+        print('Sampling')
         return [hyperopt.pyll.stochastic.sample(space) for i in range(limit)]
 
 def print_sample(sample):
@@ -218,13 +220,14 @@ def get_space_args(args):
 
             }
             , 'cv__args': load_yaml(args.cv_config) or {
-                'single_split': args.single_split
+                #'single_split': args.single_split
             }
         }
         return space_args
 
 def load_yaml(value):
-    if value is None: return None
+    if value is None: 
+        return None
     elif os.path.isfile(value):
         with open(value, 'r') as fr:
             yo = yaml.load(fr)
@@ -239,7 +242,7 @@ def str_or_none(x):
 def get_args():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default='test_trials.p'
+    parser.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default=None
         , help='Path to file or mongo URI')
     parser.add_argument('--mongo-key', '-md', dest='mongo_key', type=str, default=None
         , help='Experiment key to read')
@@ -289,7 +292,7 @@ def get_args():
         , help='End offset of price target')
 
     # cv parameters
-    parser.add_argument('--single-split', '-sp', dest='single_split', type=int, default=100)
+    #parser.add_argument('--single-split', '-sp', dest='single_split', type=int, default=None) # 100
 
     return parser.parse_args()
 
