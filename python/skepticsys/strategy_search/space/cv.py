@@ -20,7 +20,7 @@ default_cv = {
         'test_size': 120
         , 'step_size': 120
         , 'sliding_size': scope.int(hp.quniform('cv__windowsplit__sliding_size', 480, 6000, 1)) # 960
-        , 'initial_index': -480 # initial index of TEST series #-480
+        , 'initial_test_index': -480 # initial index of TEST series #-480
     }
     #, 'single_split': 100
 }

@@ -11,11 +11,13 @@ from sklearn.utils.sparsefuncs import count_nonzero
 import backtrader as bt
 import uuid
 import datetime
+import traceback
 
 # parent submodules
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cross_validation import SingleSplit, WindowSplit
+from calibration import ClassifierCV
 from metrics import BacktraderScorer
 from trading import SeriesStrategy, BasicTradeStats
 from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer, NanSampler
@@ -31,6 +33,7 @@ def do_candidate(params):
     except Exception as e:
         # https://stackoverflow.com/a/1278740
         #raise e
+        traceback.print_exc()
         fname = os.path.split(sys.exc_info()[-1].tb_frame.f_code.co_filename)[1]
         msg = '%s, %s, %s | %s' % (sys.exc_info()[0].__name__, fname, sys.exc_info()[-1].tb_lineno, str(e))
         out = fail_trial('Exception: %s'%(msg))
@@ -95,56 +98,63 @@ def do_fit_predict(params):
     clf = do_classifier(**params['classifier__params'])
 
     # split CV
-    y_pred_sig, y_df_sig, y_test_sig = [], [], []
     cv_split = list(cv.split(prices))
-
     ### TODO ### More sophisticated CV model checking
     if len(cv_split) != len(cv_model):
         return fail_trial('CV invalid: does not match model split count', split_len=len(cv_split), model_len=len(cv_model))
 
-    for i, ((train, test), (train_model, test_model)) in enumerate(zip(cv_split, cv_model)):
+    fail_reason = {}
+    def check_split_model(X_train, y_train, X_test, y_test, i):
         # validate CV
-        print('CV {} size: {}, {}'.format(i, len(train), len(test))) ##############
-        if len(train) == 0 or len(test) == 0:
-            return fail_trial('CV invalid: set size is 0', train_len=len(train), test_len=len(test))
+        train_model, test_model = cv_model[i][0], cv_model[i][1]
 
-        if len(test) != len(test_model):
-            return fail_trial('CV invalid: test len does not match model', test_len=len(test), model_len=len(test_model))
+        print('CV {} size: {}, {}'.format(i, len(X_train), len(X_test))) ##############
+        if len(X_train) == 0 or len(X_test) == 0:
+            for k, v in fail_trial('CV invalid: set size is 0', train_len=len(X_train), test_len=len(X_test)).items():
+                fail_reason[k] = v
+            return False
 
-        X_train, X_test, y_train, y_test = prices.iloc[train], prices.iloc[test], target.iloc[train], target.iloc[test]
-        y_model = target_trade.iloc[test_model]
-        
+        if len(X_test) != len(test_model):
+            for k, v in fail_trial('CV invalid: test len does not match model', test_len=len(X_test), model_len=len(test_model)).items():
+                fail_reason[k] = v
+            return False
+
         # count CV frequencies
-        test_counts, model_counts = y_test.value_counts().to_dict(), y_model.value_counts().to_dict()
+        y_model = target_trade.iloc[test_model]
+        test_counts, model_counts = {k: v for k, v in zip(*[x.tolist() for x in np.unique(y_test, return_counts=True)])}, {k: v for k, v in zip(*[x.tolist() for x in np.unique(y_model, return_counts=True)])}
         print('CV {} freqs: {} | Model freqs: {}'.format(i, test_counts, model_counts))
         if test_counts != model_counts:
-            return fail_trial('CV invalid: test freqs do not match model', test_freqs=test_counts, model_freqs=model_counts)
+            for k, v in fail_trial('CV invalid: test freqs do not match model', test_freqs=test_counts, model_freqs=model_counts).items():
+                fail_reason[k] = v
+            return False
 
-        # fit, predict
-        print('Fitting') ##############
-        clf.fit(X_train, y_train)
-        print('Predicting') ##############
-        y_pred = clf.predict(X_test)
-        y_df = clf.predict_proba(X_test)
+        return True
 
-        # combine for scoring
-        y_pred_sig.append(y_pred)
-        y_df_sig.append(y_df)
-        y_test_sig.append(y_test)
+    clf_cv = ClassifierCV(clf, cv=cv_split, prefit_callback=check_split_model) #, prefit_params={'train_model': cv_model[0], 'test_model': cv_model[1]})
+    
+    try:
+        clf_cv.fit(prices, target)
+    except Exception as e:
+        traceback.print_exc()
+        if len(fail_reason) > 0:
+            return fail_reason
+        else:
+            return fail_trial('ClassifierCV error: %s'%(str(e)))
 
     # score
     print('Scoring') ##############
-    y_test = pd.concat(y_test_sig)
-    y_pred = pd.concat([pd.Series(y_pred_sig[i], index=y_test_sig[i].index) for i in range(len(y_pred_sig))], axis=0)
-    y_df = pd.concat([pd.DataFrame(y_df_sig[i], index=y_test_sig[i].index) for i in range(len(y_pred_sig))], axis=0)
+    agg_method = 'concatenate'
 
-    acc = skm.accuracy_score(y_test, y_pred)
-    precision, recall, fscore, support = skm.precision_recall_fscore_support(y_test, y_pred)
-    brier = skm.brier_score_loss(y_test, y_df.iloc[:,1])
-    logloss = skm.log_loss(y_test, y_df)
+    acc = clf_cv.score_cv(skm.accuracy_score, aggregate=agg_method)
+    precision, recall, fscore, support = clf_cv.score_cv(skm.precision_recall_fscore_support, aggregate=agg_method)
+    brier = clf_cv.score_cv(skm.brier_score_loss, aggregate=agg_method, proba_positive=True)
+    logloss = clf_cv.score_cv(skm.log_loss, aggregate=agg_method)
 
     # prep backtrader score
     end_offset = params['data__params']['end_target']
+
+    y_test = clf_cv.y_true
+    y_pred = clf_cv.y_pred
 
     try:
         start_loc = prices_trade.index.get_loc(y_test.index[0])
@@ -158,6 +168,8 @@ def do_fit_predict(params):
     y_prices = prices_trade.iloc[start_loc:end_loc+1,:]
 
     pnl, trade_stats = do_backtest(y_pred, y_test, y_prices)
+
+    # compile scores
     loss = logloss #-acc # brier # -pnl
 
     out = {

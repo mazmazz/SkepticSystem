@@ -198,16 +198,16 @@ class WindowSplit(BaseCrossValidator):
 
         indices = np.arange(n_samples)
         if not sliding_size is None and force_sliding_min:
-            i = max(sliding_size-1, initial_test_index-1) # TODO: if initial_test_index is train set: max(sliding_size-1, (initial_test_index+sliding_size)-1)
+            i = max(sliding_size-1, initial_test_index-1)
         else: # sliding window
             i = max(0, initial_test_index-1)
         remainder_run = False
         while True:
             if sliding_size is None: # expanding window
-                train_start, train_end = 0, i+1 # TODO: if initial_test_index is train set: initial_test_index, i+1
+                train_start, train_end = 0, i+1
                 test_start , test_end  = i+1+delay_size, n_samples if test_expanding else (i+1+delay_size)+test_size
             else: # sliding window
-                train_start, train_end = max(0, i-sliding_size+1), i+1 # TODO: if initial_test_index is train set: max(initial_test_index, i-sliding_size+1)
+                train_start, train_end = max(0, i-sliding_size+1), i+1
                 test_start , test_end  = i+1+delay_size, n_samples if test_expanding else (i+1+delay_size)+test_size
             
             if (not test_remainder and test_end > n_samples) \
