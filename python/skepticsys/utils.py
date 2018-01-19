@@ -116,3 +116,25 @@ def arr_to_datetime(y_pred, y_true=None):
     y_pred.index = pd.to_datetime(y_pred_index)
     
     return y_pred
+
+def is_pandas(x):
+    return isinstance(x, pd.DataFrame) or isinstance(x, pd.Series)
+
+def get_proba(proba, proba_positive=False):
+    if proba_positive:
+        if is_pandas(proba):
+            proba = proba.iloc[:,1]
+        else:
+            proba = proba[:,1]
+    return proba
+
+def get_slice(x, rows=None, cols=None, row_start=None, row_end=None, col_start=None, col_end=None):
+    if isinstance(x, pd.DataFrame):
+        return x.iloc[rows if rows is not None else slice(row_start, row_end), cols if cols is not None else slice(col_start, col_end)]
+    elif isinstance(x, pd.Series):
+        return x.iloc[rows if rows is not None else slice(row_start, row_end)]
+    elif len(x.shape) > 1:
+        return x[rows if rows is not None else slice(row_start, row_end), cols if cols is not None else slice(col_start, col_end)]
+    else:
+        return x[rows if rows is not None else slice(row_start, row_end)]
+    

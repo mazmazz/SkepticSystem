@@ -24,26 +24,12 @@ import sklearn.metrics as skm
 
 from statistics import mean
 
-def get_proba(proba, proba_positive=False):
-    if proba_positive:
-        if is_pandas(proba):
-            proba = proba.iloc[:,1]
-        else:
-            proba = proba[:,1]
-    return proba
-
-def is_pandas(x):
-    return isinstance(x, pd.DataFrame) or isinstance(x, pd.Series)
-
-def get_slice(x, rows=None, cols=None, row_start=None, row_end=None, col_start=None, col_end=None):
-    if isinstance(x, pd.DataFrame):
-        return x.iloc[rows if rows is not None else slice(row_start, row_end), cols if cols is not None else slice(col_start, col_end)]
-    elif isinstance(x, pd.Series):
-        return x.iloc[rows if rows is not None else slice(row_start, row_end)]
-    elif len(x.shape) > 1:
-        return x[rows if rows is not None else slice(row_start, row_end), cols if cols is not None else slice(col_start, col_end)]
-    else:
-        return x[rows if rows is not None else slice(row_start, row_end)]
+# parent submodules
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from utils import is_pandas, get_proba, get_slice
+sys.path.pop(0)
+# end parent submodules
 
 class ClassifierCV(BaseEstimator, ClassifierMixin):
     """Cross-validated classifier.
@@ -79,6 +65,12 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         If "prefit" is passed, it is assumed that base_estimator has been
         fitted already and all data is used for calibration.
 
+    super_estimator : instance BaseEstimator
+        An estimator to manipulate base_estimator after fitting.
+
+    super_cv : integer, cross-validation generator, iterable or "prefit", optional
+        CV generator to pass to super_estimator if there's a "cv" parameter.
+
     Attributes
     ----------
     classes_ : array, shape (n_classes)
@@ -109,9 +101,11 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
 
 
     """
-    def __init__(self, base_estimator=None, cv=3, prefit_callback=None, prefit_params = {}, postfit_callback = None, postfit_params = {}):
+    def __init__(self, base_estimator=None, cv=3, super_class=None, super_params={}, prefit_callback=None, prefit_params = {}, postfit_callback = None, postfit_params = {}):
         self.base_estimator = base_estimator
         self.cv = cv
+        self.super_class = super_class
+        self.super_params = super_params
         self.prefit_callback = prefit_callback
         self.prefit_params = prefit_params
         self.postfit_callback = postfit_callback
@@ -160,9 +154,19 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
 
         classifiers = []
         base_estimator = self.base_estimator
+        super_class = self.super_class
 
         if self.cv == "prefit":
-            classifiers.append(base_estimator)
+            if super_class is not None:
+                super_estimator = super_class(base_estimator, **self.super_params)
+                super_fit_parameters = signature(super_estimator.fit).parameters
+                if sample_weight is not None and 'sample_weight' in super_fit_parameters:
+                    super_estimator.fit(X, y, sample_weight)
+                else:
+                    super_estimator.fit(X, y)
+                classifiers.append(super_estimator)
+            else:
+                classifiers.append(base_estimator)
             splits = [list(range(len(X))), []]
         else:
             cv = check_cv(self.cv, y, classifier=True)
@@ -201,11 +205,28 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
                 else:
                     this_estimator.fit(X_train, y_train, **kwargs)
 
-                if callable(self.postfit_callback):
-                    if self.postfit_callback(X_train, y_train, X_test, y_test, i, **self.postfit_params) is False:
-                        raise ValueError('Fitting aborted by postfit_params')
+                if super_class is not None:
+                    super_params = {**self.super_params}
+                    if 'classes' in signature(super_class.__init__).parameters:
+                        super_params['classes'] = self.classes_
+                    super_estimator = super_class(this_estimator, **super_params)
+                    
+                    super_fit_parameters = signature(super_estimator.fit).parameters
+                    if sample_weight is not None and 'sample_weight' in super_fit_parameters:
+                        super_estimator.fit(X_test, y_test, sample_weight)
+                    else:
+                        super_estimator.fit(X_test, y_test)
 
-                classifiers.append(this_estimator)
+                    if callable(self.postfit_callback):
+                        if self.postfit_callback(X_train, y_train, X_test, y_test, i, **self.postfit_params) is False:
+                            raise ValueError('Fitting aborted by postfit_params')
+                    classifiers.append(super_estimator)
+                else:
+                    if callable(self.postfit_callback):
+                        if self.postfit_callback(X_train, y_train, X_test, y_test, i, **self.postfit_params) is False:
+                            raise ValueError('Fitting aborted by postfit_params')
+
+                    classifiers.append(this_estimator)
 
         self.reset_cv()
         self.X_, self.y_ = base_X, base_y
@@ -219,10 +240,19 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         if self.y_pred_cv_ is None:
             self.y_pred_cv_ = []
             for i, (train, test) in enumerate(self.split_):
-                result = self.classifiers_[i].predict(get_slice(self.X_, rows=test))
-                if is_pandas(self.y_):
-                    result = pd.Series(result, index=self.y_true_cv[i].index)
-                self.y_pred_cv_.append(result)
+                if hasattr(self.classifiers_[i], 'predict') and callable(self.classifiers_[i].predict):
+                    result = self.classifiers_[i].predict(get_slice(self.X_, rows=test))
+                    if is_pandas(self.y_):
+                        result = pd.Series(result, index=self.y_true_cv[i].index)
+                    self.y_pred_cv_.append(result)
+                elif hasattr(self.classifiers_[i], 'predict_proba') and callable(self.classifiers_[i].predict_proba):
+                    proba = self.classifiers_[i].predict_proba(get_slice(self.X_, rows=test))
+                    result = self.classes_[np.argmax(proba, axis=1)]
+                    if is_pandas(self.y_):
+                        result = pd.Series(result, index=self.y_true_cv[i].index)
+                    self.y_pred_cv_.append(result)
+                else:
+                    raise ValueError('Base classifier does not have "predict" or "predict_proba" callable.')
         return self.y_pred_cv_
 
     @property
@@ -230,10 +260,13 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         if self.y_proba_cv_ is None:
             self.y_proba_cv_ = []
             for i, (train, test) in enumerate(self.split_):
-                result = self.classifiers_[i].predict_proba(get_slice(self.X_, rows=test))
-                if is_pandas(self.y_):
-                    result = pd.DataFrame(result, index=self.y_true_cv[i].index)
-                self.y_proba_cv_.append(result)
+                if hasattr(self.classifiers_[i], 'predict_proba') and callable(self.classifiers_[i].predict_proba):
+                    result = self.classifiers_[i].predict_proba(get_slice(self.X_, rows=test))
+                    if is_pandas(self.y_):
+                        result = pd.DataFrame(result, index=self.y_true_cv[i].index)
+                    self.y_proba_cv_.append(result)
+                else:
+                    raise ValueError('Base classifier does not have "predict_proba" callable.')
         return self.y_proba_cv_
 
     @property
@@ -300,23 +333,30 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         score_args = kwargs
         score_parameters = signature(scorer).parameters
 
+        # todo: y_true, y_pred, y_proba dropping with NaN
+
         if aggregate in ['concatenate','concat','full','all']:
+            # drop nan from truth
+            proba, pred = self.y_proba, self.y_pred
+            nan_mask = np.any(np.stack([np.isnan(get_proba(proba, proba_positive=True)), np.isnan(pred)],axis=1),axis=1)
+            proba, pred, truth = proba[~nan_mask], pred[~nan_mask], self.y_true[~nan_mask]
+
             if 'y_true' in score_parameters:
-                score_args['y_true'] = self.y_true
+                score_args['y_true'] = truth
             elif 'y_truth' in score_parameters:
-                score_args['y_truth'] = self.y_true
+                score_args['y_truth'] = truth
             elif 'y' in score_parameters:
-                score_args['y'] = self.y_true
+                score_args['y'] = truth
 
             if 'y_pred' in score_parameters:
-                score_args['y_pred'] = self.y_pred
+                score_args['y_pred'] = pred
 
             if 'y_proba' in score_parameters:
-                score_args['y_proba'] = get_proba(self.y_proba, proba_positive=proba_positive)
+                score_args['y_proba'] = get_proba(proba, proba_positive=proba_positive)
             elif 'y_prob' in score_parameters:
-                score_args['y_prob'] = get_proba(self.y_proba, proba_positive=proba_positive)
+                score_args['y_prob'] = get_proba(proba, proba_positive=proba_positive)
             elif 'y_df' in score_parameters:
-                score_args['y_df'] = get_proba(self.y_proba, proba_positive=proba_positive)
+                score_args['y_df'] = get_proba(proba, proba_positive=proba_positive)
             
             if aggregate not in ['full','all']:
                 return scorer(**score_args)
@@ -326,6 +366,10 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         if aggregate not in ['concatenate','concat']:
             scores = []
             for pred, proba, truth in zip(self.y_pred_cv, self.y_proba_cv, self.y_true_cv):
+                # drop nan from truth
+                nan_mask = np.any(np.stack([np.isnan(get_proba(proba, proba_positive=True)), np.isnan(pred)],axis=1),axis=1)
+                proba, pred, truth = proba[~nan_mask], pred[~nan_mask], truth[~nan_mask]
+
                 if 'y_true' in score_parameters:
                     score_args['y_true'] = truth
                 elif 'y_truth' in score_parameters:
