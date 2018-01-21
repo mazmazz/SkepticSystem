@@ -1,9 +1,10 @@
 from .classifiercv import ClassifierCV
 from .euler_sigmoid import _EulerSigmoidCalibration
 from .rocch import _ROCCHCalibration
-from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration
+from sklearn.calibration import _CalibratedClassifier, _SigmoidCalibration, IsotonicRegression
 from sklearn.base import BaseEstimator
 from sklearn.preprocessing import label_binarize, LabelEncoder
+from betacal import BetaCalibration, _BetaCal
 
 class CalibratedClassifierCV(ClassifierCV):
     def __init__(self, base_estimator=None, method='sigmoid', cv=3, prefit_callback=None, prefit_params = {}, postfit_callback = None, postfit_params = {}):
@@ -58,6 +59,8 @@ class _CustomCalibratedClassifier(_CalibratedClassifier):
                 calibrator = _SigmoidCalibration()
             elif self.method == 'euler':
                 calibrator = _EulerSigmoidCalibration()
+            elif self.method == 'beta':
+                calibrator = BetaCalibration()
             elif self.method in ['rocch','convex']:
                 calibrator = _ROCCHCalibration()
             elif isinstance(self.method, BaseEstimator):
