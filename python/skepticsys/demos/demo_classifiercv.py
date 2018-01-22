@@ -1,7 +1,7 @@
 # parent submodules
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from calibration import ClassifierCV, CalibratedClassifierCV, ThresholdClassifierCV, CutoffClassifierCV
+from estimators import ClassifierCV, CalibratedClassifierCV, ThresholdClassifierCV, CutoffClassifierCV
 from cross_validation import WindowSplit
 sys.path.pop(0)
 # end parent submodules

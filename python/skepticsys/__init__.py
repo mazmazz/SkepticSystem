@@ -1,9 +1,9 @@
 import cross_validation
-import calibration
+import estimators
 import preprocessors
 import pipeline
 import utils
 import datasets
-import strategy_search
+import optimizer
 import trading
 import metrics

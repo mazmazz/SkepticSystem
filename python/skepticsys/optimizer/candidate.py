@@ -17,7 +17,7 @@ import traceback
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cross_validation import SingleSplit, WindowSplit
-from calibration import ClassifierCV
+from estimators import ClassifierCV
 from metrics import BacktraderScorer
 from trading import SeriesStrategy, BasicTradeStats
 from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer, NanSampler
@@ -127,7 +127,6 @@ def do_fit_predict(params):
             for k, v in fail_trial('CV invalid: test freqs do not match model', test_freqs=test_counts, model_freqs=model_counts).items():
                 fail_reason[k] = v
             return False
-
         return True
 
     clf_cv = ClassifierCV(clf, cv=cv_split, prefit_callback=check_split_model) #, prefit_params={'train_model': cv_model[0], 'test_model': cv_model[1]})
