@@ -6,19 +6,28 @@ def get_data_space(
     , source='csv'
     , start_index = None
     , end_index = None
-    , sample_len = None
     , dir = '.'
-    , end_target = -2
+    , end_target = None
 ):
+    space = {
+        'instrument': hp.choice('data__instrument', instruments)
+        , 'granularity': hp.choice('data__granularity', granularities)
+        , 'source': source
+        , 'start_index': start_index
+        , 'end_index': end_index
+        , 'dir': dir
+    }
+
+    if end_target is not None:
+        if isinstance(end_target, list):
+            space['end_target'] = hp.choice('data__end_target', end_target)
+        else:
+            space['end_target'] = end_target
+    else:
+        space['end_target'] = hp.quniform('data__end_target', -61, -20, 1)
+
+    space['start_target'] = -1 # todo: expose as setting, hardcode this for now
+
     return {
-        'data__params': {
-            'instrument': hp.choice('data__instrument', instruments)
-            , 'granularity': hp.choice('data__granularity', granularities)
-            , 'end_target': end_target
-            , 'source': source
-            , 'start_index': start_index
-            , 'end_index': end_index
-            , 'sample_len': sample_len
-            , 'dir': dir
-        }
+        'data__params': space
     }

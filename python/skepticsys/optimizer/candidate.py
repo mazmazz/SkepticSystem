@@ -12,12 +12,13 @@ import backtrader as bt
 import uuid
 import datetime
 import traceback
+import pprint
 
 # parent submodules
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cross_validation import SingleSplit, WindowSplit
-from estimators import ClassifierCV
+from estimators import ClassifierCV, CalibratedClassifierCV, ThresholdClassifierCV, CutoffClassifierCV
 from metrics import BacktraderScorer
 from trading import SeriesStrategy, BasicTradeStats
 from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer, NanSampler
@@ -50,33 +51,53 @@ def fail_trial(msg, **data):
 def do_fit_predict(params):
     #setup
     nans = NanSampler(drop_inf=False)
-    cv = get_cv(**params['cv__params'])
     print('='*48)
 
     # load prices
-    prices, target = do_data(**params['data__params'])
+    prices, target = do_data(params['data__params'], params['cv__params'])
     prices_trade = prices.copy()
     target_trade = target.copy()
 
     # get cv model and check validity
     prices_model, target_model = nans.sample(prices, target)
 
-    cv_model = list(cv.split(prices_model))
+    # get cv
+    cv = get_cv(prices_model, params['data__params'], params['cv__params'])
+    if not isinstance(cv, list):
+        cv = [cv]
+
+    ##### start cv logging #####
+    print('CV parameters')
+    pprint.pprint(params['cv__params'], indent=4)
+    for i, cv_unit in enumerate(cv):
+        print('CV {}: {}'.format(i, str(cv_unit)))
+
+    print('Sample_len query parameters')
+    pprint.pprint(get_sample_len(params['data__params'], params['cv__params']))
+
+    print('Price size: {}{}'.format(len(prices_model)
+        , ' | From {} to {}'.format(prices_model.index[0], prices_model.index[-1]) if isinstance(prices_model, pd.DataFrame) else ''
+    ))
+    ##### end logging #####
+
+    cv_model = list(cv[-1].split(prices_model)) # concerned only with the lastmost CV
     for i, (train, test) in enumerate(cv_model):
         if len(train) == 0 or len(test) == 0:
             return fail_trial('CV invalid: set size is 0', train_len=len(train), test_len=len(test))
         else:
-            print('Model CV {} freqs: {}'.format(i, target_model.iloc[test].value_counts().to_dict()))
+            print('Model CV Split {} freqs: {}{}'.format(i, target_model.iloc[test].value_counts().to_dict()
+                , ' | From {} to {}'.format(target_model.iloc[test].index[0], target_model.iloc[test].index[-1]) if isinstance(target_model, pd.Series) else ''
+            ))
 
     # do indicators
     print('Doing indicators') ##############
     indi_pipeline = do_indicators(**params['indicator__params'])
     if not bool(indi_pipeline):
         return fail_trial('Indicator pipeline: No transformers')
-    prices_indi = indi_pipeline.transform(prices)
+    prices_indi = indi_pipeline.transform(prices_model)
 
     # drop nan
-    prices, target = nans.sample(prices_indi, target)
+    prices, target = nans.sample(prices_indi, target_model)
 
     if len(prices) == 0:
         return fail_trial('Nan pipeline: No prices exist after transformation', shape=prices.shape)
@@ -93,44 +114,45 @@ def do_fit_predict(params):
 
     # do classifier
     print('Doing classifier') ##############
-    print('Prices shape: {}'.format(prices.shape if hasattr(prices, 'shape') else None))
-
-    clf = do_classifier(**params['classifier__params'])
+    print('Prices shape: {}{}'.format(prices.shape if hasattr(prices, 'shape') else None
+        , ' | From {} to {}'.format(prices.index[0], prices.index[-1]) if isinstance(prices, pd.DataFrame) else ''
+    ))
 
     # split CV
-    cv_split = list(cv.split(prices))
+    cv_split = list(cv[-1].split(prices)) # concerned only with the lastmost CV
     ### TODO ### More sophisticated CV model checking
     if len(cv_split) != len(cv_model):
-        return fail_trial('CV invalid: does not match model split count', split_len=len(cv_split), model_len=len(cv_model))
+        return fail_trial('CV invalid: %s does not match model split count %s' % (len(cv_split), len(cv_model)), split_len=len(cv_split), model_len=len(cv_model))
 
     fail_reason = {}
     def check_split_model(X_train, y_train, X_test, y_test, i):
         # validate CV
         train_model, test_model = cv_model[i][0], cv_model[i][1]
 
-        print('CV {} size: {}, {}'.format(i, len(X_train), len(X_test))) ##############
+        print('CV Split {} size: {}, {}'.format(i, len(X_train), len(X_test))) ##############
         if len(X_train) == 0 or len(X_test) == 0:
-            for k, v in fail_trial('CV invalid: set size is 0', train_len=len(X_train), test_len=len(X_test)).items():
+            for k, v in fail_trial('CV Split invalid: set size is 0', train_len=len(X_train), test_len=len(X_test)).items():
                 fail_reason[k] = v
             return False
 
         if len(X_test) != len(test_model):
-            for k, v in fail_trial('CV invalid: test len does not match model', test_len=len(X_test), model_len=len(test_model)).items():
+            for k, v in fail_trial('CV Split invalid: test len does not match model', test_len=len(X_test), model_len=len(test_model)).items():
                 fail_reason[k] = v
             return False
 
         # count CV frequencies
         y_model = target_trade.iloc[test_model]
         test_counts, model_counts = {k: v for k, v in zip(*[x.tolist() for x in np.unique(y_test, return_counts=True)])}, {k: v for k, v in zip(*[x.tolist() for x in np.unique(y_model, return_counts=True)])}
-        print('CV {} freqs: {} | Model freqs: {}'.format(i, test_counts, model_counts))
+        print('CV Split {} freqs: {} | Model freqs: {}'.format(i, test_counts, model_counts))
         if test_counts != model_counts:
-            for k, v in fail_trial('CV invalid: test freqs do not match model', test_freqs=test_counts, model_freqs=model_counts).items():
+            for k, v in fail_trial('CV Split invalid: test freqs do not match model', test_freqs=test_counts, model_freqs=model_counts).items():
                 fail_reason[k] = v
             return False
         return True
 
-    clf_cv = ClassifierCV(clf, cv=cv_split, prefit_callback=check_split_model) #, prefit_params={'train_model': cv_model[0], 'test_model': cv_model[1]})
-    
+    clf = do_classifier(**params['classifier__params'])
+    clf_cv = do_classifier_transforms(clf, cv, params['cv__params'], prefit_callback=check_split_model)
+
     try:
         clf_cv.fit(prices, target)
     except Exception as e:
@@ -164,7 +186,7 @@ def do_fit_predict(params):
     except KeyError:
         end_loc = len(prices_trade)-1
 
-    y_prices = prices_trade.iloc[start_loc:end_loc+1,:]
+    y_prices = prices_trade.iloc[int(start_loc):int(end_loc+1),:]
 
     pnl, trade_stats = do_backtest(y_pred, y_test, y_prices)
 
@@ -188,22 +210,39 @@ def do_fit_predict(params):
         , 'shape': prices.shape if hasattr(prices,'shape') else 'No shape? ' + str(type(prices))
     }
 
-    import pprint; pprint.pprint(out)
+    pprint.pprint(out)
     return out
 
-def do_data(
-    instrument
-    , granularity
-    , end_target
-    , source='csv'
-    , start_index=None
-    , end_index=None
-    , sample_len=None
-    , dir='.'
-):
-    prices = load_prices(instrument, granularity, start_index=start_index, end_index=end_index, source=source, sample_len=sample_len, dir=dir)
-    target = get_target(prices, end_target)
+def do_data(data_params, cv_params):
+    sample_len = get_sample_len(data_params, cv_params) # all needed data points for train test and target
+    prices = load_prices(
+        data_params['instrument']
+        , data_params['granularity']
+        , start_index=data_params['start_index']
+        , end_index=data_params['end_index']
+        , source=data_params['source']
+        , sample_len=sample_len
+        , dir=data_params['dir']
+        , from_test=True
+    )
+    target = get_target(prices, data_params['end_target'], start_offset=data_params['start_target'])
     return prices, target
+
+def get_sample_len(data_params, cv_params):
+    # get base train size
+    base_train_size = cv_params['train_size']
+    base_test_size = cv_params['test_n'] * cv_params['test_size']
+
+    transforms = list(cv_params['transforms']) if cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+
+    for transform in transforms:
+        base_train_size += transform['test_n'] * transform['test_size']
+
+    return {
+        'train': base_train_size
+        , 'test': base_test_size
+        , 'target': int(abs(data_params['end_target']) + abs(data_params['start_target']))
+    }
 
 def do_indicators(
     **indi_params
@@ -321,6 +360,69 @@ def do_classifier(
     else:
         return None
 
+def do_classifier_transforms(base_clf, cv_list, cv_params, **kwargs):
+    # add master transform to end of list
+    transforms = cv_params['transforms'] if cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+    transforms = [*transforms, {
+        'master': True
+        , 'test_size': cv_params['test_size']
+        , 'test_n': cv_params['test_n']
+    }]
+
+    clf = base_clf
+    for i, transform in enumerate(transforms):
+        if 'calibration' in transform:
+            clf = CalibratedClassifierCV(base_estimator=clf, method=transform['method'], cv=cv_list[i])
+        elif 'threshold' in transform:
+            clf = ThresholdClassifierCV(base_estimator=clf, method=transform['method'], cv=cv_list[i])
+        elif 'cutoff' in transform:
+            clf = CutoffClassifierCV(base_estimator=clf, cv=cv_list[i])
+        elif 'master' in transform:
+            clf = ClassifierCV(base_estimator=clf, cv=cv_list[i], **kwargs)
+        
+    return clf
+
+def get_cv(prices, data_params, cv_params):
+    if 'cv' in cv_params:
+        return cv_params['cv'](**cv_params['params'])
+    elif 'single_split' in cv_params:
+        return SingleSplit(test_size=cv_params['single_split'])
+
+    # else, construct chained WindowSplit CV
+    # base params go last
+    # but grab base_train_size and base_train_sliding for first CV
+
+    # add master transform to end of list
+    transforms = list(cv_params['transforms']) if cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+    transforms.append({
+        'master': True
+        , 'test_size': cv_params['test_size']
+        , 'test_n': cv_params['test_n']
+    })
+
+    cv = []
+    prior_train_size = cv_params['train_size']
+    for transform in transforms:
+        if 'master' in transform and data_params['start_index'] is not None:
+            initial_test_index = 0-(len(prices)-prices.index.get_loc(data_params['start_index']))
+            final_index = initial_test_index + (abs(transform['test_size'])*abs(transform['test_n']))
+        else:
+            initial_test_index = -(abs(transform['test_size'])*abs(transform['test_n']))
+            final_index = None
+
+        train_size = prior_train_size
+        args = {
+            'test_size': abs(transform['test_size'])
+            , 'step_size': abs(transform['test_size'])
+            , 'initial_test_index': initial_test_index
+            , 'sliding_size': train_size if cv_params['train_sliding'] else None
+            , 'final_index': final_index
+        }
+        cv.append(WindowSplit(**args))
+        prior_train_size += (transform['test_size'] * transform['test_n'])
+
+    return cv
+
 def do_backtest(
     y_pred, y_true, y_prices
     , initial_balance = 100000.
@@ -350,11 +452,3 @@ def do_backtest(
     pnl = results['all']['pnl']['total']
 
     return pnl, results
-
-def get_cv(**cv_params):
-    if 'cv' in cv_params:
-        return cv_params['cv'](**cv_params['params'])
-    elif 'single_split' in cv_params:
-        return SingleSplit(test_size=cv_params['single_split'])
-    else:
-        return None

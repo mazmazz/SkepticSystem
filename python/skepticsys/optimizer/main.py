@@ -203,15 +203,20 @@ def get_space_args(args):
         return load_yaml(args.space_config)
     else:
         space_args = {
-            'data__args': load_yaml(args.data_config) or {
+            'test__args': load_yaml(args.test_config) or {
+                'start_index': args.test_start_index
+                , 'end_index': args.test_end_index
+                , 'end_target': args.test_end_target
+                , 'test_size': args.test_size
+                , 'test_n': args.test_n
+                , 'train_size': args.train_size
+                , 'train_sliding': args.train_sliding
+            }
+            , 'data__args': load_yaml(args.data_config) or {
                 'instruments': args.data_instruments
                 , 'granularities': args.data_granularities
-                , 'start_index': args.data_start_index
-                , 'end_index': args.data_end_index
-                , 'sample_len': args.data_sample_len
                 , 'source': args.data_source
                 , 'dir': args.data_dir
-                , 'end_target': args.data_end_target
             }
             , 'indicator__args': load_yaml(args.indicator_config) or {
                 
@@ -274,6 +279,7 @@ def get_args():
         , help='Path to save best trial result.')
 
     parser.add_argument('--space-config', '-sc', dest='space_config', type=str, default=None)
+    parser.add_argument('--test-config', '-tc', dest='test_config', type=str, default=None)
     parser.add_argument('--data-config', '-dc', dest='data_config', type=str, default=None)
     parser.add_argument('--indi-config', '-ic', dest='indicator_config', type=str, default=None)
     parser.add_argument('--classifier-config', '-cc', dest='classifier_config', type=str, default=None)
@@ -282,17 +288,19 @@ def get_args():
     # data parameters
     parser.add_argument('--instruments', '-di', dest='data_instruments', type=str, nargs='+', default=['USDJPY'])
     parser.add_argument('--granularities', '-dg', dest='data_granularities', type=str, nargs='+', default=['H1'])
-    parser.add_argument('--start-index', '-dsi', dest='data_start_index', type=int, default=None) ### TODO ### supposed to be str
-    parser.add_argument('--end-index', '-dei', dest='data_end_index', type=int, default=None) ### TODO ### supposed to be str
-    parser.add_argument('--sample-len', '-dsl', dest='data_sample_len', type=int, default=-12000)
     parser.add_argument('--source', '-ds', dest='data_source', type=str, default='csv')
     parser.add_argument('--dir', '-dd', dest='data_dir', type=str, default='D:\\Projects\\Prices'
-        , help='Dir of CSV prices')
-    parser.add_argument('--end-target', '-de', dest='data_end_target', type=int, default=-61
-        , help='End offset of price target')
+        , help='Dir of CSV prices')    
 
-    # cv parameters
-    #parser.add_argument('--single-split', '-sp', dest='single_split', type=int, default=None) # 100
+    # test parameters
+    parser.add_argument('--start-index', '-tsi', dest='test_start_index', type=int, default=None) ### TODO ### supposed to be str
+    parser.add_argument('--end-index', '-tei', dest='test_end_index', type=int, default=None) ### TODO ### supposed to be str
+    parser.add_argument('--end-target', '-tt', dest='test_end_target', type=int, default=None # -61
+        , help='End offset of price target')
+    parser.add_argument('--test-size', '-tss', dest='test_size', type=int, default=None) # 120
+    parser.add_argument('--test-n', '-tsn', dest='test_n', type=int, default=None) # 4
+    parser.add_argument('--train-size', '-tns', dest='train_size', type=int, default=None) # 6000
+    parser.add_argument('--train-sliding', '-tnl', dest='train_sliding', type=bool, default=None) # True
 
     return parser.parse_args()
 
