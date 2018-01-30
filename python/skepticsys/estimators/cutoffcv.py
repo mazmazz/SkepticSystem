@@ -268,7 +268,7 @@ class _CutoffEstimator(BaseEstimator):
                 # sort ascending affects thresholds of equal score
                 # ascending true gets the more exclusive cutoff, false gets the more inclusive cutoff
             best_idx = thr_test_lower['score'].idxmax() if maximize_score else thr_test_lower['score'].idxmin()
-            if not np.isnan(best_idx) and best_idx in thr_test_upper.index:
+            if not np.isnan(best_idx) and best_idx in thr_test_lower.index:
                 lower_score = thr_test_lower['threshold'].loc[best_idx]
             else:
                 lower_score = np.nan

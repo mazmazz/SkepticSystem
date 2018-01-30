@@ -140,7 +140,7 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         #X, y = indexable(X, y)
         le = LabelBinarizer().fit(y)
         self.classes_ = le.classes_
-
+        
         # Check that each cross-validation fold can have at least one
         # example per class
         n_folds = self.cv if isinstance(self.cv, int) \
@@ -418,9 +418,10 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         C : array, shape (n_samples, n_classes)
             The predicted probas.
         """
+
         check_is_fitted(self, ["classes_", "classifiers_"])
-        X = check_array(X, accept_sparse=['csc', 'csr', 'coo'],
-                        force_all_finite=False)
+        # X = check_array(X, accept_sparse=['csc', 'csr', 'coo'],
+        #                 force_all_finite=False)
         # Compute the arithmetic mean of the predictions of the classifiers
         mean_proba = np.zeros((X.shape[0], len(self.classes_)))
         for classifier in self.classifiers_:
