@@ -15,6 +15,15 @@ import pickle
 import signal
 from hyperopt.mongoexp import MongoTrials
 
+# globals for interrupt access
+Interrupt_Time = None
+Interrupt_Count = 0
+Fmin_Trials = None
+Fmin_Trials_Path=None
+Fmin_Best_Params_Path=None
+Fmin_Best_Result_Path=None
+Fmin_Master_Start_Time=None
+
 def main(args=None):
     # get space schema
     space_args = get_space_args(args)
@@ -98,18 +107,24 @@ def eval_sample(sample, do_print=True):
     return results
 
 def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_trials_only=False):
-    master_start_time = time()
+    global Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time
+    Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path = trials_path, best_params_path, best_result_path
+    
+    Fmin_Master_Start_Time = time()
 
+    int_count = 0
+    int_time = None
     def sigint_handler():
         print('Interrupting...')
-        handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=master_start_time)
+        handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time)
         return
     
     # sigint handler to workaround scipy ctrl+c crash
-    handler = handle_ctrl()
+    handler = handle_ctrl(hook_sigint=handle_staged_interrupt)
 
     try:
-        best_params = fmin(do_candidate, space=space, algo=tpe.suggest, max_evals=limit, trials=trials)
+        Fmin_Trials = trials # global for interrupt access
+        best_params = fmin(do_candidate, space=space, algo=tpe.suggest, max_evals=limit, trials=Fmin_Trials)
     except KeyboardInterrupt:
         sigint_handler()
         unhandle_result = unhandle_ctrl(handler)
@@ -117,9 +132,9 @@ def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_p
 
     unhandle_result = unhandle_ctrl(handler)
 
-    handle_trials(trials, best_params=best_params, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=master_start_time)
+    handle_trials(trials, best_params=best_params, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time)
 
-def handle_trials(trials, best_params=None, best_result=None, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', master_start_time=None):
+def handle_trials(trials, best_params=None, best_result=None, trials_path=None, best_params_path=None, best_result_path=None, master_start_time=None):
     is_mongo = trials_path.startswith('mongo:') if isinstance(trials_path, str) else False
 
     if master_start_time is not None:
@@ -154,7 +169,31 @@ def handle_trials(trials, best_params=None, best_result=None, trials_path='test_
         with open(best_result_path, 'w') as f:
             f.write(pprint.pformat(best_result))
 
-    print('Finished, saved to {}, {}, {}'.format(trials_path, best_params_path, best_result_path)) #: {}'.format(best))
+    print('Saved to {}, {}, {}'.format(trials_path, best_params_path, best_result_path)) #: {}'.format(best))
+
+def handle_staged_interrupt():
+    global Interrupt_Time, Interrupt_Count, Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time
+
+    print('\n' + '='*20 + '\n')
+
+    # interrupt 3 times in 5 seconds = quit
+    # else, print trial results
+    if Interrupt_Time is None or (time()-Interrupt_Time) > 5:
+        Interrupt_Time = time()
+        Interrupt_Count = 0
+
+    Interrupt_Count += 1
+
+    if Interrupt_Count > 2:
+        Interrupt_Time = None
+        Interrupt_Count = 0
+        import _thread
+        _thread.interrupt_main()
+    else:
+        if Interrupt_Count == 1: # first signal only
+            handle_trials(Fmin_Trials, trials_path=Fmin_Trials_Path, best_params_path=Fmin_Best_Params_Path, best_result_path=Fmin_Best_Result_Path, master_start_time=Fmin_Master_Start_Time) # print only
+        print('Interrupt %s more times in %.1f seconds to quit' % (3-Interrupt_Count, 5-(time()-Interrupt_Time)))
+        print('\n' + '='*20 + '\n')
 
 def handle_ctrl(hook_sigint=None):
     if os.name != 'nt':
