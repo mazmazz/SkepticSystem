@@ -13,6 +13,7 @@ import uuid
 import datetime
 import traceback
 import pprint
+from sklearn.base import clone
 
 # parent submodules
 import os, sys
@@ -63,8 +64,9 @@ def do_fit_predict(params):
 
     # get cv
     cv = get_cv(prices_model, params['data__params'], params['cv__params'])
-    if not isinstance(cv, list):
-        cv = [cv]
+    cv_base = get_cv(prices_model, params['data__params'], params['cv__params'], base_only=True)
+    if not isinstance(cv, list): cv = [cv]
+    if not isinstance(cv_base, list): cv_base = [cv_base]
 
     ##### start cv logging #####
     print('CV parameters')
@@ -88,6 +90,8 @@ def do_fit_predict(params):
             print('Model CV Split {} freqs: {}{}'.format(i, target_model.iloc[test].value_counts().to_dict()
                 , ' | From {} to {}'.format(target_model.iloc[test].index[0], target_model.iloc[test].index[-1]) if isinstance(target_model, pd.Series) else ''
             ))
+    
+    cv_model_base = list(cv_base[-1].split(prices_model))
 
     # do indicators
     print('Doing indicators') ##############
@@ -125,9 +129,9 @@ def do_fit_predict(params):
         return fail_trial('CV invalid: %s does not match model split count %s' % (len(cv_split), len(cv_model)), split_len=len(cv_split), model_len=len(cv_model))
 
     fail_reason = {}
-    def check_split_model(X_train, y_train, X_test, y_test, i):
+    def check_split_model(X_train, y_train, X_test, y_test, i, cv_model_test):
         # validate CV
-        train_model, test_model = cv_model[i][0], cv_model[i][1]
+        train_model, test_model = cv_model_test[i][0], cv_model_test[i][1]
 
         print('CV Split {} size: {}, {}'.format(i, len(X_train), len(X_test))) ##############
         if len(X_train) == 0 or len(X_test) == 0:
@@ -151,10 +155,41 @@ def do_fit_predict(params):
         return True
 
     clf = do_classifier(**params['classifier__params'])
-    clf_cv = do_classifier_transforms(clf, cv, params['cv__params'], prefit_callback=check_split_model)
+    clf_base = do_classifier_transforms(clf, cv_base, params['cv__params'], base_only=True, prefit_callback=check_split_model, prefit_params={'cv_model_test':cv_model_base})
+    clf_trans = do_classifier_transforms(clf, cv, params['cv__params'], prefit_callback=check_split_model, prefit_params={'cv_model_test':cv_model})
 
     try:
-        clf_cv.fit(prices, target)
+        clf_base.fit(prices, target)
+        out_base = do_score(clf_base, params, prices, prices_trade)
+
+        if out_base['accuracy'] < 0.7 or params['cv__params']['transforms'] is None or len(params['cv__params']['transforms']) == 0: 
+            # todo: adjustable threshold field and value
+            print('Base accuracy: %s\nSkipping transforms' % out_base['accuracy'])
+            out = {
+                'status': out_base['status']
+                , 'loss': out_base['loss']
+                , 'base': out_base
+                , 'trans': None
+            }
+        else:
+            print('Base accuracy: %s\nDoing transforms...' % out_base['accuracy'])
+
+            clf_trans.fit(prices, target)
+            out_trans = do_score(clf_trans, params, prices, prices_trade)
+
+            out = {
+                'base': out_base
+                , 'trans': out_trans
+            }
+            if out_trans['loss'] < out_base['loss']:
+                out['status'] = out_trans['status']
+                out['loss'] = out_trans['loss']
+            else:
+                out['status'] = out_base['status']
+                out['loss'] = out_base['loss']
+
+            print('Trans accuracy: %s' % out_trans['accuracy'])
+            
     except Exception as e:
         traceback.print_exc()
         if len(fail_reason) > 0:
@@ -162,6 +197,11 @@ def do_fit_predict(params):
         else:
             return fail_trial('ClassifierCV error: %s'%(str(e)))
 
+    # score
+    pprint.pprint(out)
+    return out
+
+def do_score(clf_cv, params, prices, prices_trade):
     # score
     print('Scoring') ##############
     agg_method = 'concatenate'
@@ -209,8 +249,6 @@ def do_fit_predict(params):
         , 'support': list(support if support is not None else [])
         , 'shape': prices.shape if hasattr(prices,'shape') else 'No shape? ' + str(type(prices))
     }
-
-    pprint.pprint(out)
     return out
 
 def do_data(data_params, cv_params):
@@ -360,16 +398,16 @@ def do_classifier(
     else:
         return None
 
-def do_classifier_transforms(base_clf, cv_list, cv_params, **kwargs):
+def do_classifier_transforms(base_clf, cv_list, cv_params, base_only=False, **kwargs):
     # add master transform to end of list
-    transforms = cv_params['transforms'] if cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+    transforms = cv_params['transforms'] if not base_only and cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
     transforms = [*transforms, {
         'master': True
         , 'test_size': cv_params['test_size']
         , 'test_n': cv_params['test_n']
     }]
 
-    clf = base_clf
+    clf = clone(base_clf)
     for i, transform in enumerate(transforms):
         if 'calibration' in transform:
             clf = CalibratedClassifierCV(base_estimator=clf, method=transform['method'], cv=cv_list[i])
@@ -382,7 +420,7 @@ def do_classifier_transforms(base_clf, cv_list, cv_params, **kwargs):
         
     return clf
 
-def get_cv(prices, data_params, cv_params):
+def get_cv(prices, data_params, cv_params, base_only=False):
     if 'cv' in cv_params:
         return cv_params['cv'](**cv_params['params'])
     elif 'single_split' in cv_params:
@@ -393,7 +431,7 @@ def get_cv(prices, data_params, cv_params):
     # but grab base_train_size and base_train_sliding for first CV
 
     # add master transform to end of list
-    transforms = list(cv_params['transforms']) if cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+    transforms = list(cv_params['transforms']) if not base_only and cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
     transforms.append({
         'master': True
         , 'test_size': cv_params['test_size']
