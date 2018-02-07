@@ -114,6 +114,11 @@ class WindowSplit(BaseCrossValidator):
         is figured from the proportion of sample size. If this is set to `None`,
         train set will be expanding.
 
+    initial_train_index: int or float, default=0
+        Initial index of train series, if sliding_size is None. If `initial_train_index` is a fraction
+        between 0 and 1, size is figured from the proportion of total sample
+        size.
+
     initial_test_index : int, default=0
         Index of the first sample for the initial test set. If this is a fraction 
         between 0 and 1 or 0 and -1, index is found at the proportion of sample size.
@@ -138,11 +143,12 @@ class WindowSplit(BaseCrossValidator):
     test_remainder : bool, default=False
         Allow last split if test set size is smaller than `test_size` and at least 1.
     """
-    def __init__(self, test_size=1, step_size=1, delay_size=0, sliding_size=None, initial_test_index=0, final_index=None, min_test_size=None, force_sliding_min=True, test_remainder=False):
+    def __init__(self, test_size=1, step_size=1, delay_size=0, sliding_size=None, initial_train_index=0, initial_test_index=0, final_index=None, min_test_size=None, force_sliding_min=True, test_remainder=False):
         self.test_size = test_size
         self.step_size = step_size
         self.delay_size = delay_size
         self.sliding_size = sliding_size
+        self.initial_train_index = initial_train_index
         self.initial_test_index = initial_test_index
         self.final_index = final_index
         self.min_test_size = min_test_size
@@ -185,6 +191,7 @@ class WindowSplit(BaseCrossValidator):
         step_size = _get_size(n_samples, self.step_size)
         delay_size = _get_size(n_samples, self.delay_size)
         sliding_size = _get_size(n_samples, self.sliding_size)
+        initial_train_index = _get_size(n_samples, self.initial_train_index, neg_mode='subtract')
         initial_test_index = _get_size(n_samples, self.initial_test_index, neg_mode='subtract')
         final_index = _get_size(n_samples, self.final_index, neg_mode='subtract')
         min_test_size = _get_size(n_samples, self.min_test_size)
@@ -204,7 +211,7 @@ class WindowSplit(BaseCrossValidator):
         remainder_run = False
         while True:
             if sliding_size is None: # expanding window
-                train_start, train_end = 0, i+1
+                train_start, train_end = initial_train_index, i+1
                 test_start , test_end  = i+1+delay_size, n_samples if test_expanding else (i+1+delay_size)+test_size
             else: # sliding window
                 train_start, train_end = max(0, i-sliding_size+1), i+1

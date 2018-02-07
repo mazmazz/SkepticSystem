@@ -18,7 +18,7 @@ def get_cv_space(
 
 default_cv = {
     'train_size': scope.int(hp.quniform('cv__train_size', 480, 6000, 1)) # 960
-    , 'train_sliding': True # hp.choice('cv__train_sliding', [False, True])
+    , 'train_sliding': hp.choice('cv__train_sliding', [False, True])
 
     # master
     # , 'master': True

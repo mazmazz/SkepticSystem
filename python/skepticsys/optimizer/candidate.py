@@ -452,6 +452,7 @@ def get_cv(prices, data_params, cv_params, base_only=False):
         args = {
             'test_size': abs(transform['test_size'])
             , 'step_size': abs(transform['test_size'])
+            , 'initial_train_index': 0 if cv_params['train_sliding'] else initial_test_index-train_size
             , 'initial_test_index': initial_test_index
             , 'sliding_size': train_size if cv_params['train_sliding'] else None
             , 'final_index': final_index
