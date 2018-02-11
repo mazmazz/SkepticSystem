@@ -25,8 +25,10 @@ default_cv = {
     , 'test_size': scope.int(hp.quniform('cv__test_size', 60, 250, 1))
     , 'test_n': 4 #scope.int(hp.quniform('cv__test_n', 1, 11, 1))
 
+    , 'verify_factor': [0.75,0.5,0.25] #hp.choice('cv__verify_factor', [1, 0.5, 0.25])
+
     , 'transforms': hp.choice('cv__transforms', [
-        #None
+        None
         
         # , [
         #     {
@@ -51,15 +53,15 @@ default_cv = {
         # ]
 
         # ,
-        [
-            {
-                'cutoff': True
-                , 'test_size': scope.int(hp.quniform('cv__cut__test_size', 60, 250, 1)) # 120
-                , 'test_n': scope.int(hp.quniform('cv__cut__test_n', 1, 11, 1)) # 4
-                # , 'train_size': scope.int(hp.quniform('cv__cut__train_size', 480, 6000, 1))
-                # , 'train_sliding': hp.choice('cv__cut__train_sliding', [False, True])
-            }
-        ]
+        # [
+        #     {
+        #         'cutoff': True
+        #         , 'test_size': scope.int(hp.quniform('cv__cut__test_size', 60, 250, 1)) # 120
+        #         , 'test_n': scope.int(hp.quniform('cv__cut__test_n', 1, 11, 1)) # 4
+        #         # , 'train_size': scope.int(hp.quniform('cv__cut__train_size', 480, 6000, 1))
+        #         # , 'train_sliding': hp.choice('cv__cut__train_sliding', [False, True])
+        #     }
+        # ]
 
         # , [
         #     {

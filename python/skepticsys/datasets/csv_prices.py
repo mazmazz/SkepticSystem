@@ -3,6 +3,8 @@ import pandas as pd
 import datetime
 import hashlib
 
+from .bounds import get_bounds
+
 cache_ = {} # params_, hash_, df_
 
 def file_hash(filename):
@@ -110,42 +112,14 @@ def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_te
         end_loc = data.index.get_loc(end_index)
     else:
         end_loc = len(data)
-
-    if isinstance(sample_len, dict):
-        train_len = int(abs(sample_len['train']))
-        test_len = int(abs(sample_len['test']))
-        target_len = int(abs(sample_len['target']))
-        sample_len = int(sum([train_len, test_len, target_len]))
-    else:
-        train_len, test_len, target_len = None, None, None
-
-    if from_test:
-        if sample_len is not None:
-            if start_index is not None:
-                if train_len is None:
-                    raise ValueError('Train length must be specified separately if start_index is specified.')
-                query_loc = start_loc - train_len - start_buffer
-                if query_loc < 0:
-                    raise ValueError('Not enough data for requested train_len %s and start_index' % (train_len, start_index))
-            else:
-                query_loc = end_loc - sample_len - start_buffer
-                if query_loc < start_loc:
-                    raise ValueError('Not enough data for requested sample_len %s' % sample_len)
-            start_loc = query_loc
-        
-        if target_len is not None and end_index is not None: # if end_index is not specified, we don't care about the end bounds.
-            query_loc = end_loc + target_len
-            if query_loc > len(data):
-                raise ValueError('Not enough data for requested target_len' % (target_len))
-            end_loc = query_loc
-    else:
-        if sample_len is not None and sample_len != 0:
-            if sample_len > 0:
-                end_loc = start_loc+sample_len
-            else: 
-                start_loc = end_loc-sample_len
-
-    output = data[start_loc:end_loc]        
+    
+    final_start_loc, final_end_loc, test_start_loc, test_end_loc = \
+        get_bounds(start_loc, end_loc, sample_len, len(data)
+                   , from_test=from_test, start_buffer=start_buffer
+                   , start_index=start_index, end_index=end_index
+                   )
+    
+    output = data[final_start_loc:final_end_loc]
 
     return output
 

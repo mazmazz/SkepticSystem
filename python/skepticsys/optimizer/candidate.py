@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import hyperopt as hp
 from imblearn.pipeline import make_pipeline
-from collections import OrderedDict
+from collections import OrderedDict, Iterable
 import copy
 from xgboost import XGBClassifier
 import random
@@ -14,6 +14,7 @@ import datetime
 import traceback
 import pprint
 from sklearn.base import clone
+import math
 
 # parent submodules
 import os, sys
@@ -65,14 +66,16 @@ def do_fit_predict(params):
     # get cv
     cv = get_cv(prices_model, params['data__params'], params['cv__params'])
     cv_base = get_cv(prices_model, params['data__params'], params['cv__params'], base_only=True)
-    if not isinstance(cv, list): cv = [cv]
-    if not isinstance(cv_base, list): cv_base = [cv_base]
+    cv_verify = get_cv(prices_model, params['data__params'], params['cv__params'], do_verify=True)
 
     ##### start cv logging #####
     print('CV parameters')
     pprint.pprint(params['cv__params'], indent=4)
     for i, cv_unit in enumerate(cv):
         print('CV {}: {}'.format(i, str(cv_unit)))
+    for i, cv_unit in enumerate(cv_verify):
+        for j, cv_subunit in enumerate(cv_unit):
+            print('Verify CV {}-{}: {}'.format(i, j, str(cv_subunit)))
 
     print('Sample_len query parameters')
     pprint.pprint(get_sample_len(params['data__params'], params['cv__params']))
@@ -251,6 +254,60 @@ def do_score(clf_cv, params, prices, prices_trade):
     }
     return out
 
+####################################
+# Data and CV
+####################################
+
+def doing_verify(cv_params):
+    return len(cv_params['verify_factor']) > 0 if isinstance(cv_params['verify_factor'], Iterable) else cv_params['verify_factor'] > 0 if cv_params['verify_factor'] is not None else False
+
+def get_verify_n(test_n, factor):
+    return math.ceil(test_n * factor)
+
+def get_transforms(cv_params, base_only=False):
+    # add master transform to end of list
+    transforms = list(cv_params['transforms']) if not base_only and cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+    transforms.append({
+        'master': True
+        , 'test_size': cv_params['test_size']
+        , 'test_n': cv_params['test_n']
+    })
+    return transforms
+
+def get_split_sizes(transforms, verify_factors=[1], separate_verify=False):
+    # todo: separate verify's test split needs to reflect start/end index;
+    # train splits must be rolled into nominal train split
+    total_test_size, total_verify_size = 0, 0
+    for transform in transforms:
+        total_test_size += transform['test_size'] * transform['test_n']
+        if 'master' in transform:
+            total_verify_size += transform['test_size'] * get_verify_n(transform['test_n'], max(verify_factors))
+        else:
+            if separate_verify:
+                total_verify_size += transform['test_size'] * transform['test_n']
+    return total_test_size, total_verify_size
+
+def get_sample_len(data_params, cv_params):
+    transforms = get_transforms(cv_params)
+
+    # get base train size
+    base_train_size = cv_params['train_size']
+    
+    if doing_verify(cv_params):
+        # add test size to nominal train size, because we're doing verification
+        # make verify size the nominal test size
+        total_test_size, total_verify_size = get_split_sizes(transforms)
+        base_train_size += total_test_size
+        base_test_size = total_verify_size
+    else:
+        base_test_size = cv_params['test_n'] * cv_params['test_size']
+
+    return {
+        'train': base_train_size
+        , 'test': base_test_size
+        , 'target': int(abs(data_params['end_target']) + abs(data_params['start_target']))
+    }
+
 def do_data(data_params, cv_params):
     sample_len = get_sample_len(data_params, cv_params) # all needed data points for train test and target
     prices = load_prices(
@@ -266,21 +323,82 @@ def do_data(data_params, cv_params):
     target = get_target(prices, data_params['end_target'], start_offset=data_params['start_target'])
     return prices, target
 
-def get_sample_len(data_params, cv_params):
-    # get base train size
-    base_train_size = cv_params['train_size']
-    base_test_size = cv_params['test_n'] * cv_params['test_size']
+def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
+    if 'cv' in cv_params:
+        return cv_params['cv'](**cv_params['params'])
+    elif 'single_split' in cv_params:
+        return SingleSplit(test_size=cv_params['single_split'])
 
-    transforms = list(cv_params['transforms']) if cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
+    # else, construct chained WindowSplit CV
+    # base params go last
+    transforms = get_transforms(cv_params)
 
-    for transform in transforms:
-        base_train_size += transform['test_n'] * transform['test_size']
+    verify_cv = []
+    verify_factors = [1] #if not do_verify else cv_params['verify_factor'] if isinstance(cv_params['verify_factor'], Iterable) else [cv_params['verify_factor']] if cv_params['verify_factor'] is not None else [1]
 
-    return {
-        'train': base_train_size
-        , 'test': base_test_size
-        , 'target': int(abs(data_params['end_target']) + abs(data_params['start_target']))
-    }
+    total_test_size, total_verify_size = get_split_sizes(transforms, verify_factors=verify_factors)
+
+    # assume that data bounds accurately encompass verify_n*test_size + test_n*test_size
+    data_test_end = len(prices)-total_verify_size-1 # non-inclusive, making this the inclusive start of verify master split
+    data_test_start = data_test_end-total_test_size #-1 # first index of first test split
+    data_verify_start = data_test_end-sum([transform['test_size']*transform['test_n'] 
+                                           for transform in transforms if 'master' not in transform]
+                                          )
+        # this is different from verify master split, as pre-transforms must run before master split, unless separate_verify is true (todo)
+
+    for verify_factor in verify_factors:
+        transform_cv = []
+        prior_train_size = cv_params['train_size']
+        prior_test_size = 0
+        for transform in transforms:
+            # Window size calculation: [train = (sum(test len) + train len)] + sum(test len)
+            if not do_verify:
+                current_test_size = transform['test_size'] * transform['test_n']
+                initial_test_index = data_test_start + prior_test_size
+                final_index = initial_test_index + current_test_size
+            else:
+                if 'master' in transform:
+                    current_test_size = transform['test_size'] * get_verify_n(transform['test_n'], verify_factor)
+                else:
+                    current_test_size = transform['test_size'] * transform['test_n']
+                initial_test_index = data_verify_start + prior_test_size # inclusive start of verify split
+                final_index = initial_test_index + current_test_size
+
+            train_size = prior_train_size
+            args = {
+                'test_size': abs(transform['test_size'])
+                , 'step_size': abs(transform['test_size'])
+                , 'initial_test_index': initial_test_index-len(prices)
+                , 'final_index': final_index-len(prices) #- 1
+                    # todo: problem: final_index is inclusive, so initial_test_index and final_index are not
+                    # mutually exclusive between splits. Adjusting this messes up the split length.
+            }
+            if cv_params['train_sliding']:
+                args['initial_train_index'] = 0
+                args['sliding_size'] = train_size
+            else:
+                args['initial_train_index'] = max(0, initial_test_index-train_size)
+                args['sliding_size'] = None
+            
+            transform_cv.append(WindowSplit(**args))
+            prior_train_size += current_test_size
+            prior_test_size += current_test_size
+        verify_cv.append(transform_cv)
+
+    if not do_verify and len(verify_cv) > 0:
+        if base_only:
+            return [verify_cv[0][-1]]
+        else:
+            return verify_cv[0]
+    else:
+        if base_only:
+            return [[unit[-1]] for unit in verify_cv]
+        else:
+            return verify_cv
+
+####################################
+# Indicators
+####################################
 
 def do_indicators(
     **indi_params
@@ -364,6 +482,10 @@ def do_indicators(
     else:
         return None
 
+####################################
+# Classifiers and Transforms
+####################################
+
 def do_classifier(
     **classifier_params
 ):
@@ -400,12 +522,7 @@ def do_classifier(
 
 def do_classifier_transforms(base_clf, cv_list, cv_params, base_only=False, **kwargs):
     # add master transform to end of list
-    transforms = cv_params['transforms'] if not base_only and cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
-    transforms = [*transforms, {
-        'master': True
-        , 'test_size': cv_params['test_size']
-        , 'test_n': cv_params['test_n']
-    }]
+    transforms = get_transforms(cv_params, base_only=base_only)
 
     clf = clone(base_clf)
     for i, transform in enumerate(transforms):
@@ -419,48 +536,6 @@ def do_classifier_transforms(base_clf, cv_list, cv_params, base_only=False, **kw
             clf = ClassifierCV(base_estimator=clf, cv=cv_list[i], **kwargs)
         
     return clf
-
-def get_cv(prices, data_params, cv_params, base_only=False):
-    if 'cv' in cv_params:
-        return cv_params['cv'](**cv_params['params'])
-    elif 'single_split' in cv_params:
-        return SingleSplit(test_size=cv_params['single_split'])
-
-    # else, construct chained WindowSplit CV
-    # base params go last
-    # but grab base_train_size and base_train_sliding for first CV
-
-    # add master transform to end of list
-    transforms = list(cv_params['transforms']) if not base_only and cv_params['transforms'] is not None and len(cv_params['transforms']) > 0 else []
-    transforms.append({
-        'master': True
-        , 'test_size': cv_params['test_size']
-        , 'test_n': cv_params['test_n']
-    })
-
-    cv = []
-    prior_train_size = cv_params['train_size']
-    for transform in transforms:
-        if 'master' in transform and data_params['start_index'] is not None:
-            initial_test_index = 0-(len(prices)-prices.index.get_loc(data_params['start_index']))
-            final_index = initial_test_index + (abs(transform['test_size'])*abs(transform['test_n']))
-        else:
-            initial_test_index = -(abs(transform['test_size'])*abs(transform['test_n']))
-            final_index = None
-
-        train_size = prior_train_size
-        args = {
-            'test_size': abs(transform['test_size'])
-            , 'step_size': abs(transform['test_size'])
-            , 'initial_train_index': 0 if cv_params['train_sliding'] else initial_test_index-train_size
-            , 'initial_test_index': initial_test_index
-            , 'sliding_size': train_size if cv_params['train_sliding'] else None
-            , 'final_index': final_index
-        }
-        cv.append(WindowSplit(**args))
-        prior_train_size += (transform['test_size'] * transform['test_n'])
-
-    return cv
 
 def do_backtest(
     y_pred, y_true, y_prices
