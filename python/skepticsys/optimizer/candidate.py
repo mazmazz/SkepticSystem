@@ -408,9 +408,15 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
             }
             if cv_params['train_sliding']:
                 args['initial_train_index'] = 0
-                args['sliding_size'] = train_size
+                if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
+                    args['sliding_size'] = cv_params['train_size']
+                else:
+                    args['sliding_size'] = train_size
             else:
-                args['initial_train_index'] = max(0, initial_test_index-train_size)
+                if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
+                    args['initial_train_index'] = min(0, args['initial_test_index']-cv_params['train_size'])
+                else:
+                    args['initial_train_index'] = min(0, args['initial_test_index']-train_size)
                 args['sliding_size'] = None
             
             transform_cv.append(WindowSplit(**args))
