@@ -38,6 +38,10 @@ class BacktraderScorer(_BaseScorer):
         Dictionary key to read from analyzer's get_analysis() output. Either a single
         string or a list of strings to go down a dict hierarchy. If empty list,
         return the output dict as-is. If None, analyzer must return only one metric.
+    
+    score_name: string, optional
+        Dictionary key to store output score. If None, key will be generated as
+        `{analyzer_idx}-{strat_idx}_{analyzer_name}`
 
     analyzer_callback: callable, optional
         Callable to process analysis metric, useful if multiple metrics are returned from,
@@ -49,17 +53,25 @@ class BacktraderScorer(_BaseScorer):
     process_pred: bool, default=True
         Convert y_pred to Pandas Series with DatetimeIndex. Else, pass y_pred to Cerebro as-is.
 
+    Notes
+    -----
+    `analyzer_name` and `analysis_key` can be lists of multiple analyzer metadatas.
+    Feature is triggered by `analyzer_name` being a list itself -- if this is true,
+    `analysis_key` is expected to be a list of same length, corresponding to the
+    analyzer name.
+
     Returns
     -------
     Backtrader score of either account P&L at end of test, or a metric determined from analyzer_name and analyzer_callback.
     """
-    def __init__(self, cerebro, strategy_class, strategy_pred_kw, strategy_kwargs=None, analyzer_name=None, analysis_key=None, analyzer_callback=None, initial_cash=100000., process_pred=True):
+    def __init__(self, cerebro, strategy_class, strategy_pred_kw, strategy_kwargs=None, analyzer_name=None, analysis_key=None, score_name=None, analyzer_callback=None, initial_cash=100000., process_pred=True):
         self.cerebro = cerebro
         self.strategy_class = strategy_class
         self.strategy_pred_kw = strategy_pred_kw
         self.strategy_kwargs = strategy_kwargs
         self.analyzer_name = analyzer_name
         self.analysis_key = analysis_key
+        self.score_name = score_name
         self.analyzer_callback = analyzer_callback
         self.initial_cash = initial_cash
         self.process_pred = process_pred
@@ -71,9 +83,9 @@ class BacktraderScorer(_BaseScorer):
 
     def __call__(self, estimator, X, y_true, sample_weight=None):
         y_pred = estimator.predict_proba(X)
-        return self._bt_score(y_pred, y_true=y_true, process_pred=self.process_pred)
+        return self._bt_score(y_pred, y_true=y_true)
 
-    def _bt_score(self, y_pred, y_true=None):
+    def _bt_score(self, y_pred, y_true=None, analyzer_name=None, analysis_key=None, score_name=None):
         """Score y_pred with Backtrader result.
 
         Parameters
@@ -92,8 +104,9 @@ class BacktraderScorer(_BaseScorer):
         # setup
         y_pred = arr_to_datetime(y_pred, y_true=y_true) if self.process_pred else y_pred
         cerebro = self._reset_cerebro(y_pred)
-        analyzer_name = self.analyzer_name
-        analysis_key = self.analysis_key
+        analyzer_name = analyzer_name or self.analyzer_name
+        analysis_key = analysis_key or self.analysis_key
+        score_name = score_name or self.score_name
         starting_balance = cerebro.broker.getvalue()
         
         strats = cerebro.run()
@@ -102,19 +115,38 @@ class BacktraderScorer(_BaseScorer):
             # return ending P&L by default
             metric = cerebro.broker.getvalue() - starting_balance
         else:
-            if len(strats) > 1: 
-                metric = []
-            for strat in strats:
-                analysis = getattr(strat.analyzers, analyzer_name).get_analysis()
-                if len(strats) == 1:
-                    metric = self._get_analysis_metric(analysis, analysis_key)
-                else:
-                    metric.append(self._get_analysis_metric(analysis, analysis_key))
+            if not isinstance(analyzer_name, list):
+                analyzer_name = [analyzer_name]
+                analysis_key = [analysis_key]
+                score_name = [score_name]
+            if len(strats) > 1 or len(analyzer_name) > 1: 
+                metric = {}
+            for i, (unit_name, unit_key, unit_score_name) in enumerate(zip(analyzer_name, analysis_key, score_name)):
+                for j, strat in enumerate(strats):
+                    analysis = getattr(strat.analyzers, unit_name).get_analysis()
+                    if len(strats) == 1 and len(analyzer_name) == 1:
+                        if unit_score_name is None:
+                            # pass metric as-is, because maybe they're expecting a single value.
+                            metric = self._get_analysis_metric(analysis, unit_key)
+                        else:
+                            unit_score_name = self._get_score_name(unit_score_name, unit_name, i, j, len(strats), len(analyzer_name))
+                            metric = {unit_score_name: self._get_analysis_metric(analysis, unit_key)}
+                    else:
+                        unit_score_name = self._get_score_name(unit_score_name, unit_name, i, j, len(strats), len(analyzer_name))
+                        metric[unit_score_name] = self._get_analysis_metric(analysis, unit_key)
 
         if callable(self.analyzer_callback):
             return self.analyzer_callback(metric)
         else:
             return metric
+
+    def _get_score_name(self, unit_score_name, unit_name, i, j, len_strats, len_analyzer_name):
+        if unit_score_name is None:
+            # enforce key'd dict
+            unit_score_name = '{}{}'.format('{}_'.format(j) if len_strats > 1 else '', unit_name.lower())
+        else:
+            unit_score_name = '{}{}'.format('{}_'.format(j) if len_strats > 1 else '', unit_score_name)
+        return unit_score_name
 
     def _reset_cerebro(self, y_pred):
         # set initial cash
