@@ -160,7 +160,7 @@ def do_fit_predict(params):
     clf = do_classifier(**params['classifier__params'])
     clf_base = do_classifier_transforms(clf, cv_base, params['cv__params'], base_only=True, prefit_callback=check_split_model, prefit_params={'cv_model_test':cv_model_base})
     clf_trans = do_classifier_transforms(clf, cv, params['cv__params'], prefit_callback=check_split_model, prefit_params={'cv_model_test':cv_model})
-
+    
     try:
         clf_base.fit(prices, target)
         out_base = do_score(clf_base, params, prices, prices_trade)
@@ -375,9 +375,15 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
             }
             if cv_params['train_sliding']:
                 args['initial_train_index'] = 0
-                args['sliding_size'] = train_size
+                if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
+                    args['sliding_size'] = cv_params['train_size']
+                else:
+                    args['sliding_size'] = train_size
             else:
-                args['initial_train_index'] = max(0, initial_test_index-train_size)
+                if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
+                    args['initial_train_index'] = min(0, args['initial_test_index']-cv_params['train_size'])
+                else:
+                    args['initial_train_index'] = min(0, args['initial_test_index']-train_size)
                 args['sliding_size'] = None
             
             transform_cv.append(WindowSplit(**args))
