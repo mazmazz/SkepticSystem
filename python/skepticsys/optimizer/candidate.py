@@ -177,6 +177,12 @@ def do_fit_predict(params):
             , 'trans': None
         }
     
+    # add metadata
+    out['meta'] = {
+        'data': params['data__params']
+        , 'cv': params['cv__params']
+    }
+
     # score
     pprint.pprint(out)
     return out
