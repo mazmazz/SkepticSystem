@@ -102,10 +102,12 @@ class SeriesStrategy(MultiPositionStrategy):
         # close
         current_bar = len(self)
         for tradeid in self.long_opentrades_:
-            if current_bar - self.long_opentrades_[tradeid] >= tradeexpire:
+            if current_bar - self.long_opentrades_[tradeid] >= tradeexpire-1:
+                # issue #16: checking 1 less than tradeexpire appears to sync to actual
+                # bar expiry, because we execute closing on the next bar
                 self.closetrade(data=long_feed, tradeid=tradeid)
         for tradeid in self.short_opentrades_:
-            if current_bar - self.short_opentrades_[tradeid] >= tradeexpire:
+            if current_bar - self.short_opentrades_[tradeid] >= tradeexpire-1:
                 self.closetrade(data=short_feed, tradeid=tradeid)
 
         # entry

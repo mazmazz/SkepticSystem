@@ -267,7 +267,7 @@ def do_score(clf_cv, params, prices, prices_trade):
     logloss = clf_cv.score_cv(skm.log_loss, aggregate=agg_method)
 
     # prep backtrader score
-    end_offset = params['data__params']['end_target']
+    end_offset = abs(params['data__params']['end_target']) + abs(params['data__params']['start_target'])
 
     y_test = clf_cv.y_true
     y_pred = clf_cv.y_pred
@@ -277,13 +277,15 @@ def do_score(clf_cv, params, prices, prices_trade):
     except KeyError:
         start_loc = 0
     try:
-        end_loc = min(prices_trade.index.get_loc(y_test.index[-1])-end_offset, len(prices_trade)-1)
+        end_loc = min(prices_trade.index.get_loc(y_test.index[-1])+end_offset, len(prices_trade)-1)
     except KeyError:
         end_loc = len(prices_trade)-1
 
     y_prices = prices_trade.iloc[int(start_loc):int(end_loc+1),:]
 
-    pnl, trade_stats = do_backtest(y_pred, y_test, y_prices)
+    pnl, trade_stats = do_backtest(y_pred, y_test, y_prices, expirebars=abs(params['data__params']['end_target'])-abs(params['data__params']['start_target']))
+        # issue #16: expirebars appears to be correct, because end_target-start_target is the proper bar
+        # expiry. See also SeriesStrategy, which needs to check expirebars-1 due to its counting.
 
     # compile scores
     loss = logloss #-acc # brier # -pnl
@@ -597,6 +599,7 @@ def do_classifier_transforms(base_clf, cv_list, cv_params, base_only=False, **kw
 
 def do_backtest(
     y_pred, y_true, y_prices
+    , expirebars = 1
     , initial_balance = 100000.
 ):
     y_prices = arr_to_datetime(y_prices, y_true=y_true)
@@ -612,7 +615,7 @@ def do_backtest(
 
     # make scorers
     bts = BacktraderScorer(cerebro
-        , SeriesStrategy, 'signals', strategy_kwargs={'tradeintervalbars':0, 'tradeexpirebars':60, 'stake':1}
+        , SeriesStrategy, 'signals', strategy_kwargs={'tradeintervalbars':0, 'tradeexpirebars':expirebars, 'stake':1}
         , analyzer_name='BasicStats', analysis_key=[] #['all','stats','kellyPercent']
         , initial_cash=initial_balance
     )
