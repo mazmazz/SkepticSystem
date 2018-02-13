@@ -613,22 +613,18 @@ def do_backtest(
     cerebro.adddata(data, name='LongFeed')
     cerebro.adddata(data2, name='ShortFeed')
     cerebro.addanalyzer(BasicTradeStats, useStandardPrint=True, useStandardDict=True, _name='BasicStats')
-    # cerebro.addanalyzer(bta.SharpeRatio, timeframe=bt.TimeFrame.Minutes, compression=60, annualize=True, factor=6215, _name='SharpeRatio')
-    #     # 6048 hours todo: standardize (6215?)
-    # cerebro.addanalyzer(bta.VWR, timeframe=bt.TimeFrame.Minutes, compression=60, tann=6215, _name='VWR')
 
     # make scorers
     bts = BacktraderScorer(cerebro
         , SeriesStrategy, 'signals', strategy_kwargs={'tradeintervalbars':0, 'tradeexpirebars':expirebars, 'stake':1}
-        , analyzer_name=['BasicStats'], analysis_key=[[]], score_name=['stats']
-        # , analyzer_name=['BasicStats','SharpeRatio','VWR'], analysis_key=[[],None,None], score_name=['stats','sharpe','vwr']
+        , analyzer_name=['BasicStats'], analysis_key=[[]], score_name=[None] #, score_name=['stats']
         , initial_cash=initial_balance
     )
 
     # get score
     results = bts._bt_score(y_pred, y_true=y_true)
-    results['stats']['won'].pop('streak')
-    results['stats']['lost'].pop('streak')
-    pnl = results['stats']['all']['pnl']['total']
+    results['won'].pop('streak')
+    results['lost'].pop('streak')
+    pnl = results['all']['pnl']['total']
 
     return pnl, results
