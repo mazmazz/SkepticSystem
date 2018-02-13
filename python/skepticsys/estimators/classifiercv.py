@@ -334,7 +334,7 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         score_parameters = signature(scorer).parameters
 
         # todo: y_true, y_pred, y_proba dropping with NaN
-
+        
         if aggregate in ['concatenate','concat','full','all']:
             # drop nan from truth
             proba, pred = self.y_proba, self.y_pred
@@ -362,7 +362,7 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
                 return scorer(**score_args)
             else:
                 concat_result = scorer(**score_args)
-
+        
         if aggregate not in ['concatenate','concat']:
             scores = []
             for pred, proba, truth in zip(self.y_pred_cv, self.y_proba_cv, self.y_true_cv):
