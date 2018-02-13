@@ -23,6 +23,7 @@ from sklearn.model_selection import check_cv
 import sklearn.metrics as skm
 
 from statistics import mean
+from collections import Iterable
 
 # parent submodules
 import os, sys
@@ -277,38 +278,63 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
                 self.y_true_cv_.append(get_slice(self.y_, rows=test))
         return self.y_true_cv_
 
+    def is_valid_mask(self, mask, cv=None):
+        if cv is None:
+            cv = self.y_true_cv
+        if isinstance(mask, Iterable):
+            if len(mask) != len(cv):
+                raise ValueError('score_mask length %s does not match CV length %s'%(len(mask), len(cv)))
+            else:
+                return True
+        else:
+            return False
+
+    def concat_cv(self, cv, mask=None):
+        new_cv = []
+        if self.is_valid_mask(mask, cv):
+            for i, unit in enumerate(cv):
+                if not mask[i]:
+                    if is_pandas(unit):
+                        if len(unit.shape) > 1:
+                            new_cv.append(pd.DataFrame(np.full(unit.shape, np.nan), index=unit.index))
+                        else:
+                            new_cv.append(pd.Series(np.full(unit.shape, np.nan), index=unit.index))
+                    else:
+                        new_cv.append(np.full(unit.shape, np.nan))
+                else:
+                    new_cv.append(unit)
+        else:
+            new_cv = cv
+                
+        if is_pandas(self.y_):
+            out = pd.concat(new_cv)
+        else:
+            out = np.concatenate(new_cv)
+        return out
+
     @property
     def y_pred(self):
         if self.y_pred_ is None:
-            if is_pandas(self.y_):
-                self.y_pred_ = pd.concat(self.y_pred_cv)
-            else:
-                self.y_pred_ = np.concatenate(self.y_pred_cv)
+            self.y_pred_ = self.concat_cv(self.y_pred_cv)
         return self.y_pred_
 
     @property
     def y_proba(self):
         if self.y_proba_ is None:
-            if is_pandas(self.y_):
-                self.y_proba_ = pd.concat(self.y_proba_cv)
-            else:
-                self.y_proba_ = np.concatenate(self.y_proba_cv)
+            self.y_proba_ = self.concat_cv(self.y_proba_cv)
         return self.y_proba_
 
     @property
     def y_true(self):
         if self.y_true_ is None:
-            if is_pandas(self.y_):
-                self.y_true_ = pd.concat(self.y_true_cv)
-            else:
-                self.y_true_ = np.concatenate(self.y_true_cv)
+            self.y_true_ = self.concat_cv(self.y_true_cv)
         return self.y_true_
 
     def reset_cv(self):
         self.classifiers_, self.split_, self.X_, self.y_ = None, None, None, None
         self.y_pred_cv_, self.y_proba_cv_, self.y_true_cv_, self.y_pred_, self.y_proba_, self.y_true_ = None, None, None, None, None, None
 
-    def score_cv(self, scorer=skm.accuracy_score, aggregate='average', proba_positive=False, **kwargs):
+    def score_cv(self, scorer=skm.accuracy_score, aggregate='average', proba_positive=False, score_mask=None, **kwargs):
         """Score fitted data.
 
         Parameters
@@ -327,6 +353,11 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         proba_positive : boolean, default False
             Pass only the positive class for y_proba
 
+        score_mask : list, optional
+            If `aggregate` is 'average' or 'cv', this is a boolean mask to
+            signify whether or not to score the corresponding fold. Length
+            must be the same as number of folds internally.
+
         kwargs : optional
             Additional parameters are passed to the scorer callable.
         """
@@ -336,8 +367,11 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         # todo: y_true, y_pred, y_proba dropping with NaN
         
         if aggregate in ['concatenate','concat','full','all']:
-            # drop nan from truth
-            proba, pred = self.y_proba, self.y_pred
+            # apply score_mask to concated CV (replace with nan), then drop nan from truth
+            if self.is_valid_mask(score_mask):
+                proba, pred = self.concat_cv(self.y_proba_cv, score_mask), self.concat_cv(self.y_pred_cv, score_mask)
+            else:
+                proba, pred = self.y_proba, self.y_pred
             nan_mask = np.any(np.stack([np.isnan(get_proba(proba, proba_positive=True)), np.isnan(pred)],axis=1),axis=1)
             proba, pred, truth = proba[~nan_mask], pred[~nan_mask], self.y_true[~nan_mask]
 
@@ -365,7 +399,12 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
         
         if aggregate not in ['concatenate','concat']:
             scores = []
-            for pred, proba, truth in zip(self.y_pred_cv, self.y_proba_cv, self.y_true_cv):
+            for i, (pred, proba, truth) in enumerate(zip(self.y_pred_cv, self.y_proba_cv, self.y_true_cv)):
+                if self.is_valid_mask(score_mask):
+                    if not score_mask[i]:
+                        scores.append(np.nan)
+                        continue
+
                 # drop nan from truth
                 nan_mask = np.any(np.stack([np.isnan(get_proba(proba, proba_positive=True)), np.isnan(pred)],axis=1),axis=1)
                 proba, pred, truth = proba[~nan_mask], pred[~nan_mask], truth[~nan_mask]
@@ -389,11 +428,11 @@ class ClassifierCV(BaseEstimator, ClassifierMixin):
                 scores.append(scorer(**score_args))
             
             if aggregate in ['average','avg']:
-                return mean(scores)
+                return mean([score for score in scores if not np.isnan(score)])
             elif aggregate in ['cv','crossval','split']:
                 return scores
             else:
-                avg_result = mean(scores)
+                avg_result = mean([score for score in scores if not np.isnan(score)])
                 cv_result = scores
         
         return {
