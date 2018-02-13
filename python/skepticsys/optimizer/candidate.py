@@ -121,10 +121,10 @@ def do_fit_predict(params):
 
     clf = do_classifier(**params['classifier__params'])
 
-    score_base = do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade
-                           , cv_base, params, clf_method=do_classifier_transforms
-                           , base_clf=clf, cv_list=cv_base, cv_params=params['cv__params'], base_only=True 
-                           )
+    score_base = do_cv_fit_score(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade
+                                 , cv_base, params, clf_method=do_classifier_transforms
+                                 , base_clf=clf, cv_list=cv_base, cv_params=params['cv__params'], base_only=True 
+                                 )
 
     if score_base['status'] == hp.STATUS_FAIL:
         return score_base
@@ -142,10 +142,13 @@ def do_fit_predict(params):
         # verify
         # todo: this shouldn't be a list
         for cv_subverify in cv_verify:
-            score_verify = do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade
-                            , cv_subverify, params, clf_method=do_classifier_transforms
-                            , base_clf=clf, cv_list=cv_subverify, cv_params=params['cv__params'], base_only=True
-                            )
+            clf_verify = do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade
+                                   , cv_subverify, params, clf_method=do_classifier_transforms
+                                   , base_clf=clf, cv_list=cv_subverify, cv_params=params['cv__params'], base_only=True
+                                   )
+            if isinstance(clf_verify, dict) and clf_verify['status'] == hp.STATUS_FAIL:
+                return clf_verify
+            score_verify = do_score(clf_verify, params, prices_indi, prices_trade)
             out['verify'].append(score_verify)
 
         # optimize params
@@ -235,13 +238,23 @@ def do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade
     clf = clf_method(**clf_params)
     try:
         clf.fit(prices_indi, target_indi)
-        return do_score(clf, params, prices_indi, prices_trade)
+        return clf
     except Exception as e:
         traceback.print_exc()
         if len(fail_reason) > 0:
             return fail_reason
         else:
             return fail_trial('ClassifierCV error: %s'%(str(e)))
+
+def do_cv_fit_score(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade, cv, params, clf_method, **clf_params):
+    clf = do_cv_fit(prices_model=prices_model, target_model=target_model, prices_indi=prices_indi, target_indi=target_indi
+                    , prices_trade=prices_trade, target_trade=target_trade, cv=cv, params=params
+                    , clf_method=clf_method, **clf_params
+                    )
+    if isinstance(clf, dict) and clf['status'] == hp.STATUS_FAIL:
+        return clf
+    else:
+        return do_score(clf, params, prices_indi, prices_trade)
 
 def do_score(clf_cv, params, prices, prices_trade):
     # score
