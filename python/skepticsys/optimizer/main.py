@@ -23,6 +23,7 @@ Fmin_Trials_Path=None
 Fmin_Best_Params_Path=None
 Fmin_Best_Result_Path=None
 Fmin_Master_Start_Time=None
+Fmin_Trials_N = 1
 
 def main(args=None):
     # get space schema
@@ -33,9 +34,9 @@ def main(args=None):
     trials = load_trials(args.fmin_trials, mongo_key=args.mongo_key, reset_trials=args.fmin_reset)
 
     if args.show_trials:
-        show_trials(trials=trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path)
+        show_trials(trials=trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path, show_n=args.trials_n)
     elif args.fmin:
-        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path)
+        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path, show_n=args.trials_n)
     else:
         # sample and print
         sample = get_sample(space, limit=args.sample_count, trials=trials if args.eval_trials else None, params=args.eval_params)
@@ -56,8 +57,8 @@ def load_trials(trials_path, mongo_key=None, reset_trials=False):
         else:
             return Trials()
 
-def show_trials(trials, best_params_path='test_best-params.yml', best_result_path='test_best-result.yml'):
-    handle_trials(trials, trials_path=None, best_params_path=best_params_path, best_result_path=best_result_path)
+def show_trials(trials, best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_n=1):
+    handle_trials(trials, trials_path=None, best_params_path=best_params_path, best_result_path=best_result_path, show_n=show_n)
 
 def get_sample(space, limit=10, trials=None, params=None):
     if trials is not None:
@@ -106,9 +107,9 @@ def eval_sample(sample, do_print=True):
 
     return results
 
-def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_trials_only=False):
-    global Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time
-    Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path = trials_path, best_params_path, best_result_path
+def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_n=1, show_trials_only=False):
+    global Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time, Fmin_Trials_N
+    Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Trials_N = trials_path, best_params_path, best_result_path, show_n
     
     Fmin_Master_Start_Time = time()
 
@@ -116,7 +117,7 @@ def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_p
     int_time = None
     def sigint_handler():
         print('Interrupting...')
-        handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time)
+        handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time, show_n=show_n, show_output=False)
         return
     
     # sigint handler to workaround scipy ctrl+c crash
@@ -132,9 +133,9 @@ def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_p
 
     unhandle_result = unhandle_ctrl(handler)
 
-    handle_trials(trials, best_params=best_params, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time)
+    handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time, show_n=show_n)
 
-def handle_trials(trials, best_params=None, best_result=None, trials_path=None, best_params_path=None, best_result_path=None, master_start_time=None):
+def handle_trials(trials, trials_path=None, best_params_path=None, best_result_path=None, master_start_time=None, show_n=1, show_output=True):
     is_mongo = trials_path.startswith('mongo:') if isinstance(trials_path, str) else False
 
     if master_start_time is not None:
@@ -145,34 +146,104 @@ def handle_trials(trials, best_params=None, best_result=None, trials_path=None, 
     
     ok_count = len([t for t in trials.trials if t['result']['status'] == STATUS_OK])
     print('Trials count: {} ({} ok)'.format(len(trials), ok_count))
+
     if ok_count > 0:
-        print('Lowest loss: {}'.format(min([t for t in trials.losses() if t is not None])))
-        print('Average best error: {}'.format(trials.average_best_error()))
-        if best_params is None:
-            best_params = trials.argmin
-        if best_result is None:
-            best_result = trials.best_trial
-            if 'result' in best_result:
-                best_result = best_result['result']
-                pprint.pprint(best_result)
-            else:
-                best_result = None
+        best_trials = get_best_trials(trials, show_n=show_n, get_lowest_loss=True)
+        for i, best_trial in enumerate(best_trials):
+            if show_output: print('='*5 + ' Trial {} '.format(i) + '='*5)
+            if show_output: print('Loss: {}'.format(best_trial['result']['loss'] if best_trial is not None else None))
+            
+            best_params = get_trial_args(best_trial)
+            best_result = get_trial_result(best_trial)
+            
+            if best_result is not None:
+                if show_output: pprint.pprint(best_result)
+
+            if best_params_path is not None and best_params is not None:
+                if show_n > 1:
+                    split_path = os.path.splitext(best_params_path)
+                    path = '{}-t{}{}'.format(split_path[0], i, split_path[1])
+                else:
+                    path = best_params_path
+                with open(path, 'w') as f:
+                    yaml.dump(best_params, f, default_flow_style=False)
+
+            if best_result_path is not None and best_result is not None:
+                if show_n > 1:
+                    split_path = os.path.splitext(best_result_path)
+                    path = '{}-t{}{}'.format(split_path[0], i, split_path[1])
+                else:
+                    path = best_result_path
+                with open(path, 'w') as f:
+                    f.write(pprint.pformat(best_result))
 
     if not is_mongo and trials_path is not None and len(trials) > 0:
         pickle.dump(trials, open(trials_path, 'wb'))
 
-    if best_params_path is not None and best_params is not None:
-        with open(best_params_path, 'w') as f:
-            yaml.dump(best_params, f, default_flow_style=False)
-
-    if best_result_path is not None and best_result is not None:
-        with open(best_result_path, 'w') as f:
-            f.write(pprint.pformat(best_result))
-
     print('Saved to {}, {}, {}'.format(trials_path, best_params_path, best_result_path)) #: {}'.format(best))
 
+def get_best_trials(trials, show_n=1, get_lowest_loss=False):
+    ok_count = len([t for t in trials.trials if t['result']['status'] == STATUS_OK])
+    if ok_count == 0:
+        return []
+    out = [trials.best_trial] if get_lowest_loss else []
+
+    # hack: hardcoded best trial requirements, will certainly be changed
+    try:
+        candidates = [t for t in trials.trials
+                      if t['result']['status'] == STATUS_OK
+                      ]
+        finalists = [c for c in candidates 
+                     if c['result']['base']['accuracy'] > 0.65 
+                     and isinstance(c['result']['verify'][-1], dict) and 'accuracy' in c['result']['verify'][-1]
+                     and c['result']['verify'][-1]['accuracy'] > 0.6
+                     ]
+
+        if len(finalists) == 0:
+            print('No candidates obtained for score criteria')
+            return out
+        else:
+            print('Trials meeting score criteria: %s'%len(finalists))
+
+        # ranking https://stackoverflow.com/questions/5284646/rank-items-in-an-array-using-python-numpy
+        # combine multiple ranks (rank aggregation): https://stats.stackexchange.com/questions/56852/overall-rank-from-multiple-ranked-lists
+        # weight accuracy diff by 1.5, accuracy base by 1.0
+        acc_base = np.array([c['result']['base']['accuracy'] for c in finalists])
+        acc_base_rank = (-acc_base).argsort().argsort()+1.
+        # acc_verify = np.array([c['result']['verify'][-1]['accuracy'] for c in finalists])
+        # acc_verify_rank = (-acc_verify).argsort().argsort()+1.
+        acc_diffs = np.array([abs(c['result']['base']['accuracy']-c['result']['verify'][-1]['accuracy']) for c in finalists])
+        acc_diffs_rank = acc_diffs.argsort().argsort()+1.
+
+        final_rank = (((acc_base_rank+acc_diffs_rank*1.5)/2).argsort().argsort()+1.).tolist()
+
+        for i in range(show_n):
+            if i >= len(finalists): break
+            out.append(finalists[np.argmin(final_rank)])
+            final_rank[np.argmin(final_rank)] = np.inf
+    except Exception as e:
+        print('Error obtaining best trial: {}'.format(e))
+    
+    return out
+
+def get_trial_args(trial):
+    if trial is None: return None
+    vals = trial['misc']['vals']
+    # unpack the one-element lists to values
+    # and skip over the 0-element lists
+    rval = {}
+    for k, v in list(vals.items()):
+        if v:
+            rval[k] = v[0]
+    return rval
+
+def get_trial_result(trial):
+    if trial is None: return None
+    elif 'result' in trial: return trial['result']
+    else: return None
+
 def handle_staged_interrupt():
-    global Interrupt_Time, Interrupt_Count, Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time
+    global Interrupt_Time, Interrupt_Count, Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time, Fmin_Trials_N
 
     print('\n' + '='*20 + '\n')
 
@@ -191,7 +262,7 @@ def handle_staged_interrupt():
         _thread.interrupt_main()
     else:
         if Interrupt_Count == 1: # first signal only
-            handle_trials(Fmin_Trials, trials_path=Fmin_Trials_Path, best_params_path=Fmin_Best_Params_Path, best_result_path=Fmin_Best_Result_Path, master_start_time=Fmin_Master_Start_Time) # print only
+            handle_trials(Fmin_Trials, trials_path=Fmin_Trials_Path, best_params_path=Fmin_Best_Params_Path, best_result_path=Fmin_Best_Result_Path, master_start_time=Fmin_Master_Start_Time, show_n=Fmin_Trials_N) # print only
         print('Interrupt %s more times in %.1f seconds to quit' % (3-Interrupt_Count, 5-(time()-Interrupt_Time)))
         print('\n' + '='*20 + '\n')
 
@@ -308,6 +379,8 @@ def get_args():
         , help='Show trials statistics from --trials-path')
     parser.add_argument('--show-sample', '-ss', dest='show_sample', action='store_true', default=False
         , help='Print randomly generated or loaded sample(s)')
+    parser.add_argument('--trials-n', '-tn', dest='trials_n', type=int, default=1
+        , help='# of trials to show for --show-trials or fmin results. default: 1')
 
     parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
         , help='If --trials-path exists, do not load it for fmin. Has no effect if using MongoDB.')
