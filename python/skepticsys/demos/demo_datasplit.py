@@ -41,7 +41,7 @@ class TestDataMethods(unittest.TestCase):
             , 'test_size': 100
             , 'test_n': 4
 
-            , 'verify_factor': [0.75,0.5,0.25]
+            , 'verify_factor': [0.5] #[0.75,0.5,0.25]
             
             , 'transforms': [
                 {
@@ -122,12 +122,12 @@ class TestDataMethods(unittest.TestCase):
 
             else:
                 # End index only
-                self.assertEqual(prices.index.get_loc(data_params['end_index'])
+                self.assertEqual(prices.index.get_loc(data_params['end_index'])+1
                     , len(prices) - data_params['end_buffer'] - sample_len['target'] - sample_len['post'] # 3916
                     , msg='prices end_index not in correct loc')
 
                 self.assertEqual(data_params['start_buffer'] + sample_len['train'] + sample_len['test']
-                    , prices.index.get_loc(data_params['end_index']) # 3916
+                    , prices.index.get_loc(data_params['end_index'])+1 # 3916
                     , msg='prices start_buffer, train, and test not equal to end_index loc')
 
         elif data_params['start_index'] is not None:
@@ -164,12 +164,6 @@ class TestDataMethods(unittest.TestCase):
         cv = get_cv(prices_model, data_params, cv_params)
         cv_base = get_cv(prices_model, data_params, cv_params, base_only=True)
         cv_verify = get_cv(prices_model, data_params, cv_params, do_verify=True)
-
-        last_cv = WindowSplit(delay_size=0, final_index=None, force_sliding_min=True,
-            initial_test_index=-300, initial_train_index=0, min_test_size=None,
-            sliding_size=2216, step_size=100, test_remainder=False,
-            test_size=100)
-        last_cv_list = list(last_cv.split(prices_model))
 
         import pdb; pdb.set_trace()
         pass

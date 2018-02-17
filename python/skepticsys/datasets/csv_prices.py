@@ -111,7 +111,9 @@ def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_te
         start_loc = 0
     
     if end_index is not None:
-        end_loc = data.index.get_loc(end_index)
+        end_loc = data.index.get_loc(end_index) + 1 # increment to respect exclusive end_loc
+            # note: we may have to undo increment in case calling last available index fails
+            # comment out + 1 here and in unit tests to make end_index exclusive
     else:
         end_loc = len(data)
     
