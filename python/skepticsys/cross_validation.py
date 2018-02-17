@@ -125,7 +125,7 @@ class WindowSplit(BaseCrossValidator):
         If this is a negative number, subtract the amount from sample size.
 
     final_index: int, optional
-        Last index to include in a split. Following indexes are
+        Last index to split off, exclusive. This and following indexes are
         ignored and not put into a set. If this is a fraction between 0 and 1
         or 0 and -1, index is found at the proportion of sample size. If this
         is a negative number, subtract the amount from sample size. If this
@@ -193,7 +193,8 @@ class WindowSplit(BaseCrossValidator):
         sliding_size = _get_size(n_samples, self.sliding_size)
         initial_train_index = _get_size(n_samples, self.initial_train_index, neg_mode='subtract')
         initial_test_index = _get_size(n_samples, self.initial_test_index, neg_mode='subtract')
-        final_index = _get_size(n_samples, self.final_index, neg_mode='subtract')
+        final_index = _get_size(n_samples, self.final_index, neg_mode='subtract')-1 if not self.final_index is None else None
+            # hack: last implementation made this inclusive, so deduct 1 to keep it inclusive # todo: correct for negatives?
         min_test_size = _get_size(n_samples, self.min_test_size)
         test_remainder = self.test_remainder
         force_sliding_min = self.force_sliding_min
