@@ -8,6 +8,8 @@ def get_data_space(
     , end_index = None
     , dir = '.'
     , end_target = None
+    , start_buffer = 1000
+    , end_buffer = 0
 ):
     space = {
         'instrument': hp.choice('data__instrument', instruments)
@@ -16,6 +18,8 @@ def get_data_space(
         , 'start_index': start_index
         , 'end_index': end_index
         , 'dir': dir
+        , 'start_buffer': 1000
+        , 'end_buffer': 0
     }
 
     if end_target is not None:

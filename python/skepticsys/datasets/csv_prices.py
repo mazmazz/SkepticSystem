@@ -32,6 +32,8 @@ def load_csv_prices(
     , header_row=None
     , index_to_datetime=False
     , from_test=False
+    , start_buffer=1000
+    , end_buffer=0
 ):
     params_dict = locals()
     params = ', '.join(['{}={}'.format(k, params_dict[k]) for k in sorted(list(params_dict))])
@@ -52,7 +54,7 @@ def load_csv_prices(
 
     # truncate samples only if neither start/end_index are datetimes
     if not isinstance(start_index, datetime.datetime) and not isinstance(end_index, datetime.datetime):
-        data = truncate_df(data, start_index=start_index, end_index=end_index, sample_len=sample_len, from_test=from_test)
+        data = truncate_df(data, start_index=start_index, end_index=end_index, sample_len=sample_len, from_test=from_test, start_buffer=start_buffer, end_buffer=end_buffer)
 
     # rename columns
     col_names = (
@@ -69,7 +71,7 @@ def load_csv_prices(
 
     # if start/end_index are datetime, now truncate samples
     if isinstance(start_index, datetime.datetime) or isinstance(end_index, datetime.datetime):
-        data = truncate_df(data, start_index=start_index, end_index=end_index, sample_len=sample_len, from_test=from_test)
+        data = truncate_df(data, start_index=start_index, end_index=end_index, sample_len=sample_len, from_test=from_test, start_buffer=start_buffer, end_buffer=end_buffer)
 
     # store cache
     cache_[cache_key] = {
@@ -79,7 +81,7 @@ def load_csv_prices(
 
     return data
 
-def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_test=False, start_buffer=1000):
+def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_test=False, start_buffer=1000, end_buffer=0):
     """
     Parameters
     ----------
@@ -115,7 +117,7 @@ def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_te
     
     final_start_loc, final_end_loc, test_start_loc, test_end_loc = \
         get_bounds(start_loc, end_loc, sample_len, len(data)
-                   , from_test=from_test, start_buffer=start_buffer
+                   , from_test=from_test, start_buffer=start_buffer, end_buffer=end_buffer
                    , start_index=start_index, end_index=end_index
                    )
     
