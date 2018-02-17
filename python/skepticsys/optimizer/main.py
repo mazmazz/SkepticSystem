@@ -9,6 +9,7 @@ import pprint
 import argparse
 import os
 import yaml
+import statistics
 from io import StringIO
 from time import time
 import pickle
@@ -194,9 +195,8 @@ def get_best_trials(trials, show_n=1, get_lowest_loss=False):
                       if t['result']['status'] == STATUS_OK
                       ]
         finalists = [c for c in candidates 
-                     if c['result']['base']['accuracy'] > 0.65 
-                     and isinstance(c['result']['verify'][-1], dict) and 'accuracy' in c['result']['verify'][-1]
-                     and c['result']['verify'][-1]['accuracy'] > 0.6
+                     if c['result']['base']['accuracy'] > 0.65
+                     and c['result']['verify_avg_accuracy'] > 0.6
                      ]
 
         if len(finalists) == 0:
@@ -210,9 +210,9 @@ def get_best_trials(trials, show_n=1, get_lowest_loss=False):
         # weight accuracy diff by 1.5, accuracy base by 1.0
         acc_base = np.array([c['result']['base']['accuracy'] for c in finalists])
         acc_base_rank = (-acc_base).argsort().argsort()+1.
-        # acc_verify = np.array([c['result']['verify'][-1]['accuracy'] for c in finalists])
+        # acc_verify = np.array([c['result']['verify_avg_accuracy'] for c in finalists])
         # acc_verify_rank = (-acc_verify).argsort().argsort()+1.
-        acc_diffs = np.array([abs(c['result']['base']['accuracy']-c['result']['verify'][-1]['accuracy']) for c in finalists])
+        acc_diffs = np.array([abs(c['result']['base']['accuracy']-c['result']['verify_avg_accuracy']) for c in finalists])
         acc_diffs_rank = acc_diffs.argsort().argsort()+1.
 
         final_rank = (((acc_base_rank+acc_diffs_rank*1.5)/2).argsort().argsort()+1.).tolist()

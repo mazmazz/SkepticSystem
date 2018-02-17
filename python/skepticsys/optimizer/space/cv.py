@@ -25,7 +25,7 @@ default_cv = {
     , 'test_size': scope.int(hp.quniform('cv__test_size', 60, 250, 1))
     , 'test_n': 4 #scope.int(hp.quniform('cv__test_n', 1, 11, 1))
 
-    , 'verify_factor': [0.75,0.5,0.25] #hp.choice('cv__verify_factor', [1, 0.5, 0.25])
+    , 'verify_factor': [0.5] #,0.25] #hp.choice('cv__verify_factor', [1, 0.5, 0.25])
 
     , 'transforms': hp.choice('cv__transforms', [
         None
