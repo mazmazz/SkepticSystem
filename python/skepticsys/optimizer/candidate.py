@@ -54,7 +54,7 @@ def fail_trial(msg, **data):
 
 def do_fit_predict(params):
     #setup
-    super_threshold_level = 0.7
+    super_threshold_level = 0.65
     super_threshold_field = 'accuracy'
     nans = NanSampler(drop_inf=False)
     print('='*48)
