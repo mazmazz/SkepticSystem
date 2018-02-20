@@ -42,6 +42,8 @@ class TestDataMethods(unittest.TestCase):
             , 'test_n': 4
 
             , 'verify_factor': [0.5] #[0.75,0.5,0.25]
+
+            , 'target_gap': True
             
             , 'transforms': [
                 {
@@ -108,11 +110,12 @@ class TestDataMethods(unittest.TestCase):
         prices = load_prices(**prices_params
             , sample_len=sample_len
             , from_test=True
+            , target_gap=cv_params['target_gap']
         )
         target = get_target(prices, data_params['end_target'], start_offset=data_params['start_target'])
 
         self.assertEqual(len(prices)
-            , sum(sample_len.values()) + data_params['start_buffer'] + data_params['end_buffer'] # 4276
+            , sum(sample_len.values()) + data_params['start_buffer'] + data_params['end_buffer'] + (sample_len['target'] if cv_params['target_gap'] else 0)
             , msg='prices len incorrect to sample_len')
 
         if data_params['end_index'] is not None:
@@ -126,8 +129,8 @@ class TestDataMethods(unittest.TestCase):
                     , len(prices) - data_params['end_buffer'] - sample_len['target'] - sample_len['post'] # 3916
                     , msg='prices end_index not in correct loc')
 
-                self.assertEqual(data_params['start_buffer'] + sample_len['train'] + sample_len['test']
-                    , prices.index.get_loc(data_params['end_index'])+1 # 3916
+                self.assertEqual(data_params['start_buffer'] + sample_len['train'] + sample_len['test'] + (sample_len['target'] if cv_params['target_gap'] else 0)
+                    , prices.index.get_loc(data_params['end_index'])+1
                     , msg='prices start_buffer, train, and test not equal to end_index loc')
 
         elif data_params['start_index'] is not None:
@@ -142,7 +145,7 @@ class TestDataMethods(unittest.TestCase):
         prices_model, target_model = nans.sample(prices, target)
 
         self.assertEqual(len(prices_model)
-            , len(prices) - abs(data_params['end_target']) # 4216
+            , len(prices) - abs(data_params['end_target'])
             , msg='prices_model post-NaN incorrect length')
 
     def metatest_cvsplit(self, data_params, cv_params):
@@ -155,6 +158,7 @@ class TestDataMethods(unittest.TestCase):
         prices = load_prices(**prices_params
             , sample_len=sample_len
             , from_test=True
+            , target_gap=cv_params['target_gap']
         )
         target = get_target(prices, data_params['end_target'], start_offset=data_params['start_target'])
 
@@ -164,6 +168,21 @@ class TestDataMethods(unittest.TestCase):
         cv = get_cv(prices_model, data_params, cv_params)
         cv_base = get_cv(prices_model, data_params, cv_params, base_only=True)
         cv_verify = get_cv(prices_model, data_params, cv_params, do_verify=True)
+
+        if not cv_params['train_sliding']:
+            self.assertEqual(abs(cv[0].initial_train_index)-abs(cv[0].initial_test_index)
+                , cv_params['train_size']
+                , msg='CV train length incorrect')
+            self.assertEqual(len(prices_model)-abs(cv[0].initial_train_index)
+                , data_params['start_buffer']
+                , msg='CV data length (start_buffer) incorrect')
+            self.assertEqual(abs(cv[-1].initial_train_index)-abs(cv[-1].initial_test_index)
+                , cv_params['train_size'] + sum([u['test_size']*u['test_n'] for u in transforms if 'master' not in u])
+                , msg='CV train + transform size length incorrect')
+        else:
+            self.assertEqual(cv[-1].sliding_size
+                , cv_params['train_size'] + sum([u['test_size']*u['test_n'] for u in transforms if 'master' not in u])
+                , msg='CV train + transform size length incorrect')
 
         import pdb; pdb.set_trace()
         pass

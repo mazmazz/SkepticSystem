@@ -34,6 +34,7 @@ def load_csv_prices(
     , from_test=False
     , start_buffer=1000
     , end_buffer=0
+    , target_gap=False
 ):
     params_dict = locals()
     params = ', '.join(['{}={}'.format(k, params_dict[k]) for k in sorted(list(params_dict))])
@@ -54,7 +55,7 @@ def load_csv_prices(
 
     # truncate samples only if neither start/end_index are datetimes
     if not isinstance(start_index, datetime.datetime) and not isinstance(end_index, datetime.datetime):
-        data = truncate_df(data, start_index=start_index, end_index=end_index, sample_len=sample_len, from_test=from_test, start_buffer=start_buffer, end_buffer=end_buffer)
+        data = truncate_df(data, start_index=start_index, end_index=end_index, sample_len=sample_len, from_test=from_test, start_buffer=start_buffer, end_buffer=end_buffer, target_gap=target_gap)
 
     # rename columns
     col_names = (
@@ -81,7 +82,7 @@ def load_csv_prices(
 
     return data
 
-def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_test=False, start_buffer=1000, end_buffer=0):
+def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_test=False, start_buffer=1000, end_buffer=0, target_gap=False):
     """
     Parameters
     ----------
@@ -116,11 +117,12 @@ def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_te
             # comment out + 1 here and in unit tests to make end_index exclusive
     else:
         end_loc = len(data)
-    
+
     final_start_loc, final_end_loc, test_start_loc, test_end_loc = \
         get_bounds(start_loc, end_loc, sample_len, len(data)
                    , from_test=from_test, start_buffer=start_buffer, end_buffer=end_buffer
                    , start_index=start_index, end_index=end_index
+                   , target_gap=target_gap
                    )
     
     output = data[final_start_loc:final_end_loc]

@@ -27,6 +27,8 @@ default_cv = {
 
     , 'verify_factor': [0.5] #,0.25] #hp.choice('cv__verify_factor', [1, 0.5, 0.25])
 
+    , 'target_gap': True
+
     , 'transforms': hp.choice('cv__transforms', [
         None
         

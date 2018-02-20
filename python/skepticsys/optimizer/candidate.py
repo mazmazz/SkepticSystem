@@ -437,6 +437,7 @@ def do_data(data_params, cv_params):
         , sample_len=sample_len
         , dir=data_params['dir']
         , from_test=True
+        , target_gap=cv_params['target_gap']
     )
     target = get_target(prices, data_params['end_target'], start_offset=data_params['start_target'])
     return prices, target
@@ -451,6 +452,8 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
     # base params go last
     transforms = get_transforms(cv_params)
     master_transform = transforms[-1] # should have master in it
+    sample_len = get_sample_len(data_params, cv_params)
+    target_gap = cv_params['target_gap'] if 'target_gap' in cv_params else False
 
     verify_cv = []
     verify_factors = [1] if not doing_verify(cv_params) else cv_params['verify_factor'] if isinstance(cv_params['verify_factor'], Iterable) else [cv_params['verify_factor']] if cv_params['verify_factor'] is not None else [1]
@@ -462,12 +465,20 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
     data_verify_end = data_post_end-total_post_size+1 # exclusive verify end, inclusive post start
     data_test_end = data_verify_end-total_verify_size # exclusive test end, inclusive verify start
     data_train_end = data_test_end-total_test_size # exclusive train end, inclusive test start
+
+    data_post_start = data_verify_end
+
+    if target_gap:
+        data_verify_end -= sample_len['target']
+        data_test_end -= sample_len['target']
+        data_train_end -= sample_len['target']
+
     data_verify_start = data_test_end-sum([transform['test_size']*transform['test_n'] 
                                            for transform in transforms if 'master' not in transform]
                                           )
         # this is different from verify master split, as pre-transforms must run before master split, unless separate_verify is true (todo)
 
-    post_able = do_verify and len(prices) >= sum(get_sample_len(data_params, cv_params).values()) + data_params['start_buffer'] + data_params['end_buffer'] - abs(data_params['end_target'])
+    post_able = do_verify and len(prices) >= sum(sample_len.values()) + data_params['start_buffer'] + data_params['end_buffer'] - sample_len['target'] + (sample_len['target'] if target_gap else 0)
         ### todo: do per factor, not just all of them
 
     for verify_factor in verify_factors:
@@ -482,7 +493,15 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
             factor_is_post, verify_subfactor = verify_subfactor_unit['post'], verify_subfactor_unit['factor']
             transform_cv = []
             prior_train_size = cv_params['train_size']
-            
+
+            if not do_verify:
+                test_start = data_train_end
+            else:
+                if factor_is_post and target_gap:
+                    test_start = data_verify_start + sample_len['target']
+                else:
+                    test_start = data_verify_start
+
             if factor_is_post:
                 prior_test_size = master_transform['test_size'] * get_verify_n(master_transform['test_n'], max(verify_factors))
             else:
@@ -492,24 +511,22 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
                 # Window size calculation: [train = (sum(test len) + train len)] + sum(test len)
                 if not do_verify:
                     current_test_size = transform['test_size'] * transform['test_n']
-                    initial_test_index = data_train_end + prior_test_size
+                    initial_test_index = test_start + prior_test_size
                     final_index = initial_test_index + current_test_size
                 else:
                     if 'master' in transform:
                         current_test_size = transform['test_size'] * get_verify_n(transform['test_n'], verify_subfactor)
                     else:
                         current_test_size = transform['test_size'] * transform['test_n']
-                    initial_test_index = data_verify_start + prior_test_size # inclusive start of verify split
+                    initial_test_index = test_start + prior_test_size # inclusive start of verify split
                     final_index = initial_test_index + current_test_size
 
                 train_size = prior_train_size
                 args = {
                     'test_size': abs(transform['test_size'])
                     , 'step_size': abs(transform['test_size'])
-                    , 'initial_test_index': initial_test_index-len(prices)-1 # todo: is this causing a 1 row inaccuracy?
+                    , 'initial_test_index': initial_test_index-len(prices)-1
                     , 'final_index': final_index-len(prices)
-                        # todo: problem: final_index is inclusive, so initial_test_index and final_index are not
-                        # mutually exclusive between splits. Adjusting this messes up the split length.
                 }
 
                 if final_index-len(prices) >= 0 and final_index-len(prices) <= 1: 
