@@ -3,7 +3,7 @@ from .indicator import get_indicator_space
 from .classifier import get_classifier_space
 from .cv import get_cv_space
 
-def get_space(args):
+def get_space(args={}, do_transforms=False):
     data_args, cv_args = process_test_args(
         args['data__args'] if 'data__args' in args else {}
         , args['cv__args'] if 'cv__args' in args else {}
@@ -13,8 +13,9 @@ def get_space(args):
     spaces = [
         get_data_space(**data_args)
         , get_indicator_space(args['indicator__args'] if 'indicator__args' in args else {})
-        , get_classifier_space()
-        , get_cv_space(cv_args)
+        , get_classifier_space(args['classifier__args'] if 'classifier__args' in args else {})
+        , get_cv_space(cv_args, do_transforms=do_transforms)
+        , {'meta__params': {**args['meta__args']}}
     ]
 
     return {k: v for d in spaces for k, v in d.items()}

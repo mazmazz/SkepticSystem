@@ -19,6 +19,8 @@ from hyperopt.mongoexp import MongoTrials
 # globals for interrupt access
 Interrupt_Time = None
 Interrupt_Count = 0
+Super_Threshold = 0.65
+Super_Field = 'accuracy'
 Fmin_Trials = None
 Fmin_Trials_Path=None
 Fmin_Best_Params_Path=None
@@ -35,9 +37,9 @@ def main(args=None):
     trials = load_trials(args.fmin_trials, mongo_key=args.mongo_key, reset_trials=args.fmin_reset)
 
     if args.show_trials:
-        show_trials(trials=trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path, show_n=args.trials_n)
+        show_trials(trials=trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path, show_n=args.trials_n, super_threshold=args.super_threshold, super_field=args.super_field)
     elif args.fmin:
-        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path, show_n=args.trials_n)
+        do_fmin(space, limit=args.sample_count, trials=trials, trials_path=args.fmin_trials, best_params_path=args.best_params_path, best_result_path=args.best_result_path, show_n=args.trials_n, super_threshold=args.super_threshold, super_field=args.super_field)
     else:
         # sample and print
         sample = get_sample(space, limit=args.sample_count, trials=trials if args.eval_trials else None, params=args.eval_params)
@@ -58,8 +60,8 @@ def load_trials(trials_path, mongo_key=None, reset_trials=False):
         else:
             return Trials()
 
-def show_trials(trials, best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_n=1):
-    handle_trials(trials, trials_path=None, best_params_path=best_params_path, best_result_path=best_result_path, show_n=show_n)
+def show_trials(trials, best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_n=1, super_threshold=0.65, super_field='accuracy'):
+    handle_trials(trials, trials_path=None, best_params_path=best_params_path, best_result_path=best_result_path, show_n=show_n, super_threshold=super_threshold, super_field=super_field)
 
 def get_sample(space, limit=10, trials=None, params=None):
     if trials is not None:
@@ -108,9 +110,10 @@ def eval_sample(sample, do_print=True):
 
     return results
 
-def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_n=1, show_trials_only=False):
-    global Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time, Fmin_Trials_N
+def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_path='test_best-params.yml', best_result_path='test_best-result.yml', show_n=1, show_trials_only=False, super_threshold=0.65, super_field='params'):
+    global Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time, Fmin_Trials_N, Super_Threshold, Super_Field
     Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Trials_N = trials_path, best_params_path, best_result_path, show_n
+    Super_Threshold, Super_Field = super_threshold, super_field
     
     Fmin_Master_Start_Time = time()
 
@@ -136,7 +139,7 @@ def do_fmin(space, trials, limit=100, trials_path='test_trials.p', best_params_p
 
     handle_trials(trials, trials_path=trials_path, best_params_path=best_params_path, best_result_path=best_result_path, master_start_time=Fmin_Master_Start_Time, show_n=show_n)
 
-def handle_trials(trials, trials_path=None, best_params_path=None, best_result_path=None, master_start_time=None, show_n=1, show_output=True):
+def handle_trials(trials, trials_path=None, best_params_path=None, best_result_path=None, master_start_time=None, show_n=1, show_output=True, super_threshold=0.65, super_field='accuracy'):
     is_mongo = trials_path.startswith('mongo:') if isinstance(trials_path, str) else False
 
     if master_start_time is not None:
@@ -149,7 +152,7 @@ def handle_trials(trials, trials_path=None, best_params_path=None, best_result_p
     print('Trials count: {} ({} ok)'.format(len(trials), ok_count))
 
     if ok_count > 0:
-        best_trials = get_best_trials(trials, show_n=show_n, get_lowest_loss=True)
+        best_trials = get_best_trials(trials, show_n=show_n, get_lowest_loss=True, super_threshold=super_threshold, super_field=super_field)
         for i, best_trial in enumerate(best_trials):
             if show_output: print('='*5 + ' Trial {} '.format(i) + '='*5)
             if show_output: print('Loss: {}'.format(best_trial['result']['loss'] if best_trial is not None else None))
@@ -183,7 +186,7 @@ def handle_trials(trials, trials_path=None, best_params_path=None, best_result_p
 
     print('Saved to {}, {}, {}'.format(trials_path, best_params_path, best_result_path)) #: {}'.format(best))
 
-def get_best_trials(trials, show_n=1, get_lowest_loss=False):
+def get_best_trials(trials, show_n=1, get_lowest_loss=False, super_threshold=0.65, super_field='accuracy'):
     ok_count = len([t for t in trials.trials if t['result']['status'] == STATUS_OK])
     if ok_count == 0:
         return []
@@ -195,8 +198,8 @@ def get_best_trials(trials, show_n=1, get_lowest_loss=False):
                       if t['result']['status'] == STATUS_OK
                       ]
         finalists = [c for c in candidates 
-                     if c['result']['base']['accuracy'] > 0.65
-                     and c['result']['verify_avg_accuracy'] > 0.6
+                     if 'super_score' in c['result'] and c['result']['super_score'] is not None
+                     and c['result']['super_score'] > super_threshold
                      ]
 
         if len(finalists) == 0:
@@ -243,7 +246,7 @@ def get_trial_result(trial):
     else: return None
 
 def handle_staged_interrupt():
-    global Interrupt_Time, Interrupt_Count, Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time, Fmin_Trials_N
+    global Interrupt_Time, Interrupt_Count, Super_Threshold, Super_Field, Fmin_Trials, Fmin_Trials_Path, Fmin_Best_Params_Path, Fmin_Best_Result_Path, Fmin_Master_Start_Time, Fmin_Trials_N
 
     print('\n' + '='*20 + '\n')
 
@@ -262,7 +265,7 @@ def handle_staged_interrupt():
         _thread.interrupt_main()
     else:
         if Interrupt_Count == 1: # first signal only
-            handle_trials(Fmin_Trials, trials_path=Fmin_Trials_Path, best_params_path=Fmin_Best_Params_Path, best_result_path=Fmin_Best_Result_Path, master_start_time=Fmin_Master_Start_Time, show_n=Fmin_Trials_N) # print only
+            handle_trials(Fmin_Trials, trials_path=Fmin_Trials_Path, best_params_path=Fmin_Best_Params_Path, best_result_path=Fmin_Best_Result_Path, master_start_time=Fmin_Master_Start_Time, show_n=Fmin_Trials_N, super_threshold=Super_Threshold, super_field=Super_Field) # print only
         print('Interrupt %s more times in %.1f seconds to quit' % (3-Interrupt_Count, 5-(time()-Interrupt_Time)))
         print('\n' + '='*20 + '\n')
 
@@ -337,6 +340,11 @@ def get_space_args(args):
             , 'cv__args': load_yaml(args.cv_config) or {
                 #'single_split': args.single_split
             }
+            , 'meta__args': load_yaml(args.meta_config) or {
+                'super_threshold': args.super_threshold
+                , 'super_field': args.super_field
+                , 'transform_limit': args.transform_limit
+            }
         }
         return space_args
 
@@ -396,6 +404,7 @@ def get_args():
     parser.add_argument('--indi-config', '-ic', dest='indicator_config', type=str, default=None)
     parser.add_argument('--classifier-config', '-cc', dest='classifier_config', type=str, default=None)
     parser.add_argument('--cv-config', '-vc', dest='cv_config', type=str, default=None)
+    parser.add_argument('--meta-config', '-mc', dest='meta_config', type=str, default=None)
 
     # data parameters
     parser.add_argument('--instruments', '-di', dest='data_instruments', type=str, nargs='+', default=['USDJPY'])
@@ -413,6 +422,10 @@ def get_args():
     parser.add_argument('--test-n', '-tsn', dest='test_n', type=int, default=None) # 4
     parser.add_argument('--train-size', '-tns', dest='train_size', type=int, default=None) # 6000
     parser.add_argument('--train-sliding', '-tnl', dest='train_sliding', type=bool, default=None) # True
+
+    parser.add_argument('--super-threshold', '-sh', dest='super_threshold', type=float, default=0.65)
+    parser.add_argument('--super-field', '-sf', dest='super_field', type=str, default='accuracy')
+    parser.add_argument('--transform-limit', '-tl', dest='transform_limit', type=int, default=0)
 
     return parser.parse_args()
 

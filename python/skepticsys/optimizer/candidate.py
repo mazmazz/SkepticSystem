@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import hyperopt as hp
+from hyperopt import fmin, space_eval, tpe, Trials
 from imblearn.pipeline import make_pipeline
 from collections import OrderedDict, Iterable
 import copy
@@ -17,6 +18,7 @@ import pprint
 from sklearn.base import clone
 import math
 import statistics
+from space import get_space
 
 # parent submodules
 import os, sys
@@ -34,7 +36,48 @@ sys.path.pop(0)
 
 def do_candidate(params):
     try:
-        return do_fit_predict(params)
+        if params['cv__params']['doing_transforms'] and params['cv__params']['transforms'] is None:
+            return fail_trial('Transform phase must specify a transform step')
+
+        super_threshold_level = params['meta__params']['super_threshold']
+        super_threshold_field = params['meta__params']['super_field']
+
+        if False and not params['cv__params']['doing_transforms']: # testing
+            base_result = {'base':{super_threshold_field:super_threshold_level}, 'status': hp.STATUS_OK, 'loss': random.randint(0,99)}
+        else:
+            base_result = do_fit_predict(params, super_threshold_level=super_threshold_level, super_threshold_field=super_threshold_field)
+
+        if 'base' in base_result and super_threshold_field in base_result['base']:
+            # todo:
+            # Smarter super_field (#20)
+            # Secondary super_threshold (parameterize check for verify score)
+            if 'verify_score' in base_result and base_result['verify_score'] > 0.6:
+                base_result['super_score'] = base_result['base'][super_threshold_field]
+            else:
+                base_result['super_score'] = None
+
+        if (not params['cv__params']['doing_transforms'] 
+            and isinstance(base_result, dict) 
+            and base_result['status'] == hp.STATUS_OK
+            and 'base' in base_result
+            and super_threshold_field in base_result['base']
+            and base_result['base'][super_threshold_field] >= super_threshold_level
+        ):
+            try:
+                transform_result = do_transform_optimization(params, limit=params['meta__params']['transform_limit'], super_threshold=base_result['base'][super_threshold_field]-0.05, super_field=super_threshold_field)
+                    # super at least within 0.05 of original score
+                base_result['transform'] = transform_result
+                base_result['transform_score'] = transform_result['super_score'] if isinstance(transform_result, dict) and 'super_score' in transform_result else None
+
+                if isinstance(transform_result, dict) and 'super_score' in transform_result and (base_result['super_score'] is None or transform_result['super_score'] > base_result['super_score']):
+                    if 'verify_score' in transform_result and transform_result['verify_score'] > 0.6:
+                        base_result['super_score'] = transform_result['super_score'] # todo: transform_score and super_score separate?
+            except Exception as e:
+                traceback.print_exc()
+                print('Error optimizing transform: {}'.format(e))
+                print('Passing original candidate as-is')
+
+        return base_result
     except Exception as e:
         # https://stackoverflow.com/a/1278740
         #raise e
@@ -52,10 +95,8 @@ def fail_trial(msg, **data):
     print('Trial failed: {}'.format(msg))
     return out
 
-def do_fit_predict(params):
+def do_fit_predict(params, super_threshold_level=0.65, super_threshold_field='accuracy'):
     #setup
-    super_threshold_level = 0.65
-    super_threshold_field = 'accuracy'
     nans = NanSampler(drop_inf=False)
     print('='*48)
 
@@ -69,7 +110,6 @@ def do_fit_predict(params):
 
     # get cv
     cv = get_cv(prices_model, params['data__params'], params['cv__params'])
-    cv_base = get_cv(prices_model, params['data__params'], params['cv__params'], base_only=True)
     cv_verify = get_cv(prices_model, params['data__params'], params['cv__params'], do_verify=True)
 
     ##### start cv logging #####
@@ -121,11 +161,11 @@ def do_fit_predict(params):
 
     ### todo: split CV
 
-    clf = do_classifier(**params['classifier__params'])
+    clf = do_classifier(params['cv__params'], **params['classifier__params'])
 
     score_base = do_cv_fit_score(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade
-                                 , cv_base, params, clf_method=do_classifier_transforms
-                                 , base_clf=clf, cv_list=cv_base, cv_params=params['cv__params'], base_only=True 
+                                 , cv, params, clf_method=do_classifier_transforms, score_backtest=False
+                                 , base_clf=clf, cv_list=cv, cv_params=params['cv__params'], base_only=False
                                  )
 
     if score_base['status'] == hp.STATUS_FAIL:
@@ -137,7 +177,7 @@ def do_fit_predict(params):
             'status': score_base['status']
             , 'loss': score_base['loss']
             , 'base': score_base
-            , 'trans': None
+            , 'transform': None
             , 'verify': {}
         }
 
@@ -156,52 +196,34 @@ def do_fit_predict(params):
 
             for j, cv_subverify in enumerate(cv_verify_unit):
                 print('Doing subfactor {}'.format(subfactors[j]))
+                is_pre = j == 0
+                clf = do_classifier(params['cv__params'], **params['classifier__params'])
                 clf_verify = do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade
                                     , cv_subverify, params, clf_method=do_classifier_transforms
-                                    , base_clf=clf, cv_list=cv_subverify, cv_params=params['cv__params'], base_only=True
+                                    , base_clf=clf, cv_list=cv_subverify, cv_params=params['cv__params'], base_only=False
                                     )
                 if isinstance(clf_verify, dict) and clf_verify['status'] == hp.STATUS_FAIL:
                     return clf_verify
-                score_verify = do_score(clf_verify, params, prices_indi, prices_trade)
-                score_verify['verify_post'] = j > 0
+                score_verify = do_score(clf_verify, params, prices_indi, prices_trade, backtest=not is_pre)
+                score_verify['verify_post'] = not is_pre
                 score_verify['verify_factor'] = subfactors[j]
-                out['verify'][factor]['pre' if j == 0 else 'post'] = score_verify
+                out['verify'][factor]['pre' if is_pre else 'post'] = score_verify
                 print('Subfactor %s Accuracy: %s'%(subfactors[j], score_verify['accuracy']))
 
         out['verify_best_factor'] = get_best_verify_key(out['verify'])
         out['verify_best_accuracy'] = get_best_verify_accuracy(out['verify'])
         out['verify_avg_accuracy'] = get_avg_verify_accuracy(out['verify'])
+        out['verify_score'] = out['verify_avg_accuracy']
         print('Best verify factor: %s'%(out['verify_best_factor']))
         print('Best verify accuracy: %s'%(out['verify_best_accuracy']))
         print('Average verify accuracy: %s'%(out['verify_avg_accuracy']))
-
-        # optimize params
-        # if params['cv__params']['transforms'] is not None and len(params['cv__params']['transforms']) > 0:
-            # score_trans = do_cv_fit(prices_model, target_model, prices_indi, target_indi, cv, params, clf_method=do_classifier_transforms
-            #                        , base_clf=clf, cv_list=cv, cv_params=params['cv__params'], base_only=True 
-            #                        )
-            # clf_trans.fit(prices_indi, target)
-            # score_trans = do_score(clf_trans, params, prices_indi, prices_trade)
-
-            # out = {
-            #     'base': score_base
-            #     , 'trans': score_trans
-            # }
-            # if score_trans['loss'] < score_base['loss']:
-            #     out['status'] = score_trans['status']
-            #     out['loss'] = score_trans['loss']
-            # else:
-            #     out['status'] = score_base['status']
-            #     out['loss'] = score_base['loss']
-
-            # print('Trans accuracy: %s' % score_trans['accuracy'])
     else:
         print('Base %s: %s\nFinishing...' % (super_threshold_field, score_base[super_threshold_field]))
         out = {
             'status': score_base['status']
             , 'loss': score_base['loss']
             , 'base': score_base
-            , 'trans': None
+            , 'transform': None
             , 'verify': None
         }
     
@@ -261,6 +283,7 @@ def do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade
     clf_params['prefit_params'] = {'cv_model_test':cv_model}
 
     clf = clf_method(**clf_params)
+
     try:
         clf.fit(prices_indi, target_indi)
         return clf
@@ -271,7 +294,7 @@ def do_cv_fit(prices_model, target_model, prices_indi, target_indi, prices_trade
         else:
             return fail_trial('ClassifierCV error: %s'%(str(e)))
 
-def do_cv_fit_score(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade, cv, params, clf_method, **clf_params):
+def do_cv_fit_score(prices_model, target_model, prices_indi, target_indi, prices_trade, target_trade, cv, params, clf_method, score_backtest=False, **clf_params):
     clf = do_cv_fit(prices_model=prices_model, target_model=target_model, prices_indi=prices_indi, target_indi=target_indi
                     , prices_trade=prices_trade, target_trade=target_trade, cv=cv, params=params
                     , clf_method=clf_method, **clf_params
@@ -279,9 +302,9 @@ def do_cv_fit_score(prices_model, target_model, prices_indi, target_indi, prices
     if isinstance(clf, dict) and clf['status'] == hp.STATUS_FAIL:
         return clf
     else:
-        return do_score(clf, params, prices_indi, prices_trade)
+        return do_score(clf, params, prices_indi, prices_trade, backtest=score_backtest)
 
-def do_score(clf_cv, params, prices, prices_trade):
+def do_score(clf_cv, params, prices, prices_trade, backtest=False):
     # score
     print('Scoring') ##############
     agg_method = 'concatenate'
@@ -308,9 +331,12 @@ def do_score(clf_cv, params, prices, prices_trade):
 
     y_prices = prices_trade.iloc[int(start_loc):int(end_loc+1),:]
 
-    pnl, trade_stats = do_backtest(y_pred, y_test, y_prices, expirebars=abs(params['data__params']['end_target'])-abs(params['data__params']['start_target']))
-        # issue #16: expirebars appears to be correct, because end_target-start_target is the proper bar
-        # expiry. See also SeriesStrategy, which needs to check expirebars-1 due to its counting.
+    if backtest:
+        pnl, trade_stats = do_backtest(y_pred, y_test, y_prices, expirebars=abs(params['data__params']['end_target'])-abs(params['data__params']['start_target']))
+            # issue #16: expirebars appears to be correct, because end_target-start_target is the proper bar
+            # expiry. See also SeriesStrategy, which needs to check expirebars-1 due to its counting.
+    else:
+        pnl, trade_stats = None, None
 
     # compile scores
     loss = logloss #-acc # brier # -pnl
@@ -507,12 +533,15 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
             else:
                 prior_test_size = master_transform['test_size'] * (get_verify_n(master_transform['test_n'], max(verify_factors)) - get_verify_n(master_transform['test_n'], verify_subfactor))
 
+            prior_data_size = cv_params['train_size']
+            
             for transform in transforms:
                 # Window size calculation: [train = (sum(test len) + train len)] + sum(test len)
                 if not do_verify:
                     current_test_size = transform['test_size'] * transform['test_n']
                     initial_test_index = test_start + prior_test_size
                     final_index = initial_test_index + current_test_size
+                    prices_size = len(prices)
                 else:
                     if 'master' in transform:
                         current_test_size = transform['test_size'] * get_verify_n(transform['test_n'], verify_subfactor)
@@ -521,31 +550,60 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
                     initial_test_index = test_start + prior_test_size # inclusive start of verify split
                     final_index = initial_test_index + current_test_size
 
-                train_size = prior_train_size
-                args = {
-                    'test_size': abs(transform['test_size'])
-                    , 'step_size': abs(transform['test_size'])
-                    , 'initial_test_index': initial_test_index-len(prices)-1
-                    , 'final_index': final_index-len(prices)
-                }
-
-                if final_index-len(prices) >= 0 and final_index-len(prices) <= 1: 
-                    # hack: this should only happen if we're at the last data row (e.g., factor_is_post)
-                    # clear final_index so we don't erroneously clip it severely
-                    args['final_index'] = None
-
-                if cv_params['train_sliding']:
-                    args['initial_train_index'] = 0
-                    if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
-                        args['sliding_size'] = cv_params['train_size']
-                    else:
-                        args['sliding_size'] = train_size
+                if True or 'master' in transform:
+                    prices_size = len(prices)
                 else:
-                    if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
-                        args['initial_train_index'] = min(0, args['initial_test_index']-cv_params['train_size'])
+                    # hack: CV needs to be relative to data size, which for transforms is
+                    # truncated in CalibratedCV
+                    # so if transform is 'master', pass the original prices size
+                    # else, pass the sum of train size; all prior test sizes; and current test size
+                    prior_data_size += current_test_size
+                    prices_size = prior_data_size
+                    prices_size_diff = len(prices)-prices_size
+
+                train_size = prior_train_size
+
+                if 'master' in transform:
+                    args = {
+                        'test_size': abs(transform['test_size'])
+                        , 'step_size': abs(transform['test_size'])
+                        , 'initial_test_index': initial_test_index-prices_size-1
+                        , 'final_index': final_index-prices_size
+                    }
+
+                    if final_index-prices_size >= 0 and final_index-prices_size <= 1: 
+                        # hack: this should only happen if we're at the last data row (e.g., factor_is_post)
+                        # clear final_index so we don't erroneously clip it severely
+                        args['final_index'] = None
+
+                    if cv_params['train_sliding']:
+                        args['initial_train_index'] = 0
+                        if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
+                            args['sliding_size'] = cv_params['train_size']
+                        else:
+                            args['sliding_size'] = train_size
                     else:
-                        args['initial_train_index'] = min(0, args['initial_test_index']-train_size)
-                    args['sliding_size'] = None
+                        if base_only and 'master' in transform: # HACK: change train length to base; all else is correct
+                            args['initial_train_index'] = min(0, args['initial_test_index']-cv_params['train_size'])
+                        else:
+                            args['initial_train_index'] = min(0, args['initial_test_index']-train_size)
+                        args['sliding_size'] = None
+                else:
+                    # hack: transform CVs are relative to the required size of transform
+                    # because in classifyCV, data length passed is exactly what is needed for
+                    # non-master transforms
+                    args = {
+                        'test_size': abs(transform['test_size'])
+                        , 'step_size': abs(transform['test_size'])
+                        , 'initial_test_index': -current_test_size
+                        , 'final_index': None
+                    }
+                    if cv_params['train_sliding']:
+                        args['initial_train_index'] = 0
+                        args['sliding_size'] = train_size
+                    else:
+                        args['initial_train_index'] = -current_test_size-train_size
+                        args['sliding_size'] = None
                 
                 transform_cv.append(WindowSplit(**args))
                 prior_train_size += current_test_size
@@ -573,9 +631,10 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
 ####################################
 
 def do_indicators(
-    **indi_params
+    **indi_params_
 ):
     master_union = []
+    indi_params = copy.deepcopy(indi_params_)
     for indi in indi_params:
         if not bool(indi_params[indi]):
             continue
@@ -659,6 +718,7 @@ def do_indicators(
 ####################################
 
 def do_classifier(
+    cv_params, 
     **classifier_params
 ):
     master_pieces = {}
@@ -678,7 +738,12 @@ def do_classifier(
                 continue
 
             if clf_name == 'xgb':
-                pipe_pieces.append(XGBClassifier(**clf_params))
+                # hack: if first transform is calibration, set objective='binary:logitraw'
+                clf_inputs = {**clf_params}
+                transforms = get_transforms(cv_params)
+                if 'calibration' in transforms[0]:
+                    clf_inputs['objective'] = 'binary:logitraw'
+                pipe_pieces.append(XGBClassifier(**clf_inputs))
 
         if len(pipe_pieces) == 1:
             master_pieces[order_key] = pipe_pieces[0]
@@ -739,3 +804,54 @@ def do_backtest(
     pnl = results['all']['pnl']['total']
 
     return pnl, results
+
+####################################
+# Transforms Optimization
+####################################
+
+def do_transform_optimization(base_params, limit=0, super_threshold=0.65, super_field='accuracy'):
+    if not limit: return None
+
+    print('Finding best transform...')
+
+    param_args = copy.deepcopy(base_params)
+    param_args['cv__params'].pop('doing_transforms')
+    param_args['cv__params'].pop('transforms')
+
+    param_args['meta__params']['super_threshold'] = super_threshold
+    param_args['meta__params']['super_field'] = super_field
+
+    args = {
+        'data__args': param_args['data__params']
+        , 'indicator__args': param_args['indicator__params']
+        , 'classifier__args': param_args['classifier__params']
+        , 'cv__args': param_args['cv__params']
+        , 'meta__args': param_args['meta__params']
+    }
+    transform_space = get_space(args=args, do_transforms=True)
+
+    trials = Trials()
+    fmin(do_candidate, space=transform_space, algo=tpe.suggest, max_evals=limit, trials=trials, return_argmin=False)
+    # todo: own ctrl+c handler
+
+    ok_count = len([t for t in trials.trials if t['result']['status'] == hp.STATUS_OK])
+    if ok_count == 0:
+        print('Best transform not found')
+        return None
+
+    best_result = trials.best_trial['result']
+
+    if 'base' not in best_result or super_field not in best_result['base']:
+        print('Best transform super_field %s not found'%(super_field))
+        return None
+
+    if best_result['base'][super_field] < super_threshold:
+        print('Best transform not found, best score: %s' % best_result['base'][super_field])
+        return None
+
+    best_result['transform_params'] = trials.argmin
+
+    print('Best transform:')
+    pprint.pprint(best_result['transform_params'])
+
+    return best_result

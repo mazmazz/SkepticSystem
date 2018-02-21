@@ -10,8 +10,15 @@ sys.path.pop(0)
 
 def get_cv_space(
     params={}
+    , do_transforms=False
 ):
-    space = {**default_cv, **params}
+    if do_transforms:
+        transform_space = {**default_transform_cv}
+    else:
+        transform_space = {}
+
+    space = {**default_cv, **transform_space, **params}
+
     return {
         'cv__params': space
     }
@@ -29,58 +36,52 @@ default_cv = {
 
     , 'target_gap': True
 
+    , 'doing_transforms': False
+    , 'transforms': None
+}
+
+default_transform_cv = {
+    'doing_transforms': True
     , 'transforms': hp.choice('cv__transforms', [
-        None
-        
-        # , [
-        #     {
-        #         'calibration': True
-        #         , 'method': hp.choice('cv__cal__method', ['sigmoid','isotonic','convex','beta'])
-        #         , 'test_size': scope.int(hp.quniform('cv__cal__test_size', 60, 250, 1)) # 120
-        #         , 'test_n': scope.int(hp.quniform('cv__cal__test_n', 1, 5, 1)) # 4
-        #         # , 'train_size': scope.int(hp.quniform('cv__cal__train_size', 480, 6000, 1))
-        #         # , 'train_sliding': hp.choice('cv__cal__train_sliding', [False, True])
-        #     }
-        # ]
+        [
+            {
+                'calibration': True
+                , 'method': hp.choice('cv__cal__method', ['sigmoid','isotonic']) #,'convex','beta'])
+                , 'test_size': scope.int(hp.quniform('cv__cal__test_size', 60, 250, 1)) # 120
+                , 'test_n': scope.int(hp.quniform('cv__cal__test_n', 1, 5, 1)) # 4
+            }
+        ]
 
-        # , [
-        #     {
-        #         'threshold': True
-        #         , 'method': hp.choice('cv__thr__method', ['youden','roc'])                
-        #         , 'test_size': scope.int(hp.quniform('cv__thr__test_size', 60, 250, 1)) # 120
-        #         , 'test_n': scope.int(hp.quniform('cv__thr__test_n', 1, 5, 1)) # 4
-        #         # , 'train_size': scope.int(hp.quniform('cv__thr__train_size', 480, 6000, 1))
-        #         # , 'train_sliding': hp.choice('cv__thr__train_sliding', [False, True])
-        #     }
-        # ]
+        , [
+            {
+                'threshold': True
+                , 'method': hp.choice('cv__thr__method', ['youden','roc'])                
+                , 'test_size': scope.int(hp.quniform('cv__thr__test_size', 60, 250, 1)) # 120
+                , 'test_n': scope.int(hp.quniform('cv__thr__test_n', 1, 5, 1)) # 4
+            }
+        ]
 
-        # ,
-        # [
-        #     {
-        #         'cutoff': True
-        #         , 'test_size': scope.int(hp.quniform('cv__cut__test_size', 60, 250, 1)) # 120
-        #         , 'test_n': scope.int(hp.quniform('cv__cut__test_n', 1, 11, 1)) # 4
-        #         # , 'train_size': scope.int(hp.quniform('cv__cut__train_size', 480, 6000, 1))
-        #         # , 'train_sliding': hp.choice('cv__cut__train_sliding', [False, True])
-        #     }
-        # ]
+        ,
+        [
+            {
+                'cutoff': True
+                , 'test_size': scope.int(hp.quniform('cv__cut__test_size', 60, 250, 1)) # 120
+                , 'test_n': scope.int(hp.quniform('cv__cut__test_n', 1, 5, 1)) # 4
+            }
+        ]
 
-        # , [
-        #     {
-        #         'calibration': True
-        #         , 'method': hp.choice('cv__cal_cut__cal__method', ['sigmoid','isotonic','convex','beta'])
-        #         , 'test_size': scope.int(hp.quniform('cv__cal_cut__cal__test_size', 60, 250, 1)) # 120
-        #         , 'test_n': scope.int(hp.quniform('cv__cal_cut__cal__test_n', 1, 5, 1)) # 4
-        #         # , 'train_size': scope.int(hp.quniform('cv__cal_cut__cal__train_size', 480, 6000, 1))
-        #         # , 'train_sliding': hp.choice('cv__cal_cut__cal__train_sliding', [False, True])
-        #     }
-        #     , {
-        #         'cutoff': True
-        #         , 'test_size': scope.int(hp.quniform('cv__cal_cut__cut__test_size', 60, 250, 1)) # 120
-        #         , 'test_n': scope.int(hp.quniform('cv__cal_cut__cut__test_n', 1, 5, 1)) # 4
-        #         # , 'train_size': scope.int(hp.quniform('cv__cal_cut__cut__train_size', 480, 6000, 1))
-        #         # , 'train_sliding': hp.choice('cv__cal_cut__cut__train_sliding', [False, True])
-        #     }
-        # ]
+        , [
+            {
+                'calibration': True
+                , 'method': hp.choice('cv__cal_cut__cal__method', ['sigmoid','isotonic']) #,'convex','beta'])
+                , 'test_size': scope.int(hp.quniform('cv__cal_cut__cal__test_size', 60, 250, 1)) # 120
+                , 'test_n': scope.int(hp.quniform('cv__cal_cut__cal__test_n', 1, 5, 1)) # 4
+            }
+            , {
+                'cutoff': True
+                , 'test_size': scope.int(hp.quniform('cv__cal_cut__cut__test_size', 60, 250, 1)) # 120
+                , 'test_n': scope.int(hp.quniform('cv__cal_cut__cut__test_n', 1, 5, 1)) # 4
+            }
+        ]
     ])
 }

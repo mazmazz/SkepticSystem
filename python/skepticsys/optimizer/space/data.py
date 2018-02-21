@@ -7,19 +7,23 @@ def get_data_space(
     , start_index = None
     , end_index = None
     , dir = '.'
+    , start_target = -1
     , end_target = None
     , start_buffer = 1000
     , end_buffer = 0
+    , instrument=None # to define explicitly
+    , granularity=None  # to define explicitly
 ):
     space = {
-        'instrument': hp.choice('data__instrument', instruments)
-        , 'granularity': hp.choice('data__granularity', granularities)
+        'instrument': instrument or (hp.choice('data__instrument', instruments) if isinstance(instruments, list) else instruments)
+        , 'granularity': granularity or (hp.choice('data__granularity', granularities) if isinstance(granularities, list) else granularities)
         , 'source': source
         , 'start_index': start_index
         , 'end_index': end_index
         , 'dir': dir
-        , 'start_buffer': 1000
-        , 'end_buffer': 0
+        , 'start_buffer': start_buffer
+        , 'end_buffer': end_buffer
+        , 'start_target': start_target
     }
 
     if end_target is not None:
@@ -29,8 +33,6 @@ def get_data_space(
             space['end_target'] = end_target
     else:
         space['end_target'] = hp.quniform('data__end_target', -61, -20, 1)
-
-    space['start_target'] = -1 # todo: expose as setting, hardcode this for now
 
     return {
         'data__params': space

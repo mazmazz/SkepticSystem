@@ -23,8 +23,15 @@ def get_indicator_space(
 
     subindi_names = ('_indi', '_ma_pre', '_ma_post')
     for indi in indicators:
-        if not bool(indicators[indi]): # evals True for {}, False for None or False
-            continue
+        if isinstance(indicators[indi], dict):
+            if 'space_' in indicators[indi]:
+                indicators[indi].pop('space_')
+            else:
+                space[indi] = indicators[indi]
+                continue # skip, this indi is already filled
+        else:
+            space[indi] = indicators[indi]
+            continue # all space placeholders must be dicts; just copy and continue in case this was inputted
 
         subindi_settings = {name: indicators[indi].pop(name, None) for name in subindi_names if name in indicators[indi]}
         indi_space = {
@@ -114,56 +121,56 @@ def copy_field(name, prices, input_names=None, **kwargs):
         return np.concatenate(output, axis=1)
 
 default_indicators = {
-    'copy_open': {'callable_': copy_field, 'input_': 'open'},
-    'copy_high': {'callable_': copy_field, 'input_': 'high'},
-    'copy_low': {'callable_': copy_field, 'input_': 'low'},
-    'copy_close': {'callable_': copy_field, 'input_': 'close'},
-    'copy_volume': {'callable_': copy_field, 'input_': 'volume'},
-    'ADX': {'callable_':'talib', 'timeperiod': 14},
-    'AROONOSC': {'callable_':'talib', 'timeperiod': 14},
-    'BOP': {'callable_':'talib'},
-    'CCI': {'callable_':'talib', 'timeperiod': 14},
-    'CMO': {'callable_':'talib', 'timeperiod': 14},
-    'MACD': {'callable_':'talib', 'fastperiod': 12, 'signalperiod': 9, 'slowperiod': 26},
-    'MFI': {'callable_':'talib', 'timeperiod': 14},
-    'MINUS_DI': {'callable_':'talib', 'timeperiod': 14},
-    'MOM': {'callable_':'talib', 'timeperiod': 10},
-    'PLUS_DI': {'callable_':'talib', 'timeperiod': 14},
-    'ROCP': {'callable_':'talib', 'timeperiod': 10},
-    'RSI': {'callable_':'talib', 'timeperiod': 14},
-    'STOCH': {'callable_':'talib', 'fastk_period': 5,
+    'copy_open': {'space_': True, 'callable_': copy_field, 'input_': 'open'},
+    'copy_high': {'space_': True, 'callable_': copy_field, 'input_': 'high'},
+    'copy_low': {'space_': True, 'callable_': copy_field, 'input_': 'low'},
+    'copy_close': {'space_': True, 'callable_': copy_field, 'input_': 'close'},
+    'copy_volume': {'space_': True, 'callable_': copy_field, 'input_': 'volume'},
+    'ADX': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'AROONOSC': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'BOP': {'space_': True, 'callable_':'talib'},
+    'CCI': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'CMO': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'MACD': {'space_': True, 'callable_':'talib', 'fastperiod': 12, 'signalperiod': 9, 'slowperiod': 26},
+    'MFI': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'MINUS_DI': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'MOM': {'space_': True, 'callable_':'talib', 'timeperiod': 10},
+    'PLUS_DI': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'ROCP': {'space_': True, 'callable_':'talib', 'timeperiod': 10},
+    'RSI': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'STOCH': {'space_': True, 'callable_':'talib', 'fastk_period': 5,
         'slowd_matype': 0,
         'slowd_period': 3,
         'slowk_matype': 0,
         'slowk_period': 3},
-    'STOCHRSI': {'callable_':'talib', 'fastd_matype': 0,
+    'STOCHRSI': {'space_': True, 'callable_':'talib', 'fastd_matype': 0,
         'fastd_period': 3,
         'fastk_period': 5,
         'timeperiod': 14},
-    'ULTOSC': {'callable_':'talib', 'timeperiod1': 7, 'timeperiod2': 14, 'timeperiod3': 28},
-    'AD': {'callable_':'talib'},
-    'ADOSC': {'callable_':'talib', 'fastperiod': 3, 'slowperiod': 10},
-    'OBV': {'callable_':'talib'},
-    'NATR': {'callable_':'talib', 'timeperiod': 14},
-    'STDDEV': {'callable_':'talib', 'nbdev': 1, 'timeperiod': 5},
-    'cvi': {'callable_':'tulipy', 
+    'ULTOSC': {'space_': True, 'callable_':'talib', 'timeperiod1': 7, 'timeperiod2': 14, 'timeperiod3': 28},
+    'AD': {'space_': True, 'callable_':'talib'},
+    'ADOSC': {'space_': True, 'callable_':'talib', 'fastperiod': 3, 'slowperiod': 10},
+    'OBV': {'space_': True, 'callable_':'talib'},
+    'NATR': {'space_': True, 'callable_':'talib', 'timeperiod': 14},
+    'STDDEV': {'space_': True, 'callable_':'talib', 'nbdev': 1, 'timeperiod': 5},
+    'cvi': {'space_': True, 'callable_':'tulipy', 
         'period': 10},
-    'emv': {'callable_':'tulipy'},
-    'fosc': {'callable_':'tulipy', 
-        'input_': {'real':'close'},
+    'emv': {'space_': True, 'callable_':'tulipy'},
+    'fosc': {'space_': True, 'callable_':'tulipy', 
+        'input_': {'space_': True, 'real':'close'},
         'period': 25},
-    'kvo': {'callable_':'tulipy', 
+    'kvo': {'space_': True, 'callable_':'tulipy', 
         'long_period': 55, 'short_period': 34},
-    'mass': {'callable_':'tulipy', 
+    'mass': {'space_': True, 'callable_':'tulipy', 
         'period': 25},
-    'ppo': {'callable_':'tulipy',
-        'input_': {'real':'close'},
+    'ppo': {'space_': True, 'callable_':'tulipy',
+        'input_': {'space_': True, 'real':'close'},
         'long_period': 26, 'short_period': 12},
-    'qstick': {'callable_':'tulipy', 
+    'qstick': {'space_': True, 'callable_':'tulipy', 
         'period': 25},
-    'volatility': {'callable_':'tulipy', 
-        'input_': {'real':'close'},
+    'volatility': {'space_': True, 'callable_':'tulipy', 
+        'input_': {'space_': True, 'real':'close'},
         'period': 11},
-    'nvi': {'callable_':'tulipy'},
-    'pvi': {'callable_':'tulipy'}
+    'nvi': {'space_': True, 'callable_':'tulipy'},
+    'pvi': {'space_': True, 'callable_':'tulipy'}
 }
