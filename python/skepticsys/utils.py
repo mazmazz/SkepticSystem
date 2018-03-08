@@ -68,7 +68,7 @@ def _get_price_field(prices, field, input_names={}):
     
     return output
 
-def arr_to_datetime(y_pred, y_true=None):
+def arr_to_datetime(y_pred, y_true=None, dt_format='%Y%m%d%H%M'):
     """Convert pred to Pandas Series with DatetimeIndex.
 
     Parameters
@@ -107,14 +107,15 @@ def arr_to_datetime(y_pred, y_true=None):
 
     # convert y_pred index to DatetimeIndex
     # first convert index to string type (dtype object)
+
     if y_pred.index.dtype != object:
         y_pred_index = y_pred.index.map(str)
     else:
         y_pred_index = y_pred.index
 
     # convert index to datetime
-    y_pred.index = pd.to_datetime(y_pred_index)
-    
+    y_pred.index = pd.to_datetime(y_pred_index, format=dt_format)
+
     return y_pred
 
 def is_pandas(x):
@@ -137,4 +138,15 @@ def get_slice(x, rows=None, cols=None, row_start=None, row_end=None, col_start=N
         return x[rows if rows is not None else slice(row_start, row_end), cols if cols is not None else slice(col_start, col_end)]
     else:
         return x[rows if rows is not None else slice(row_start, row_end)]
-    
+
+def data_to_pandas(data, offset=0, index_field = 'datetime'):
+    index = [data.num2date(u) for u in getattr(data, index_field).get(offset, len(data)-offset)]
+    cols = {}
+
+    for field in data.datafields:
+        if field == index_field: 
+            continue
+        cols[field] = getattr(data, field).get(offset, len(data)-offset)
+
+    out = pd.DataFrame(cols, index=index, columns=[field for field in data.datafields if field != index_field])
+    return out

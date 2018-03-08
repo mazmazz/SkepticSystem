@@ -15,6 +15,7 @@ from time import time
 import pickle
 import signal
 from hyperopt.mongoexp import MongoTrials
+from datetime import datetime
 
 # globals for interrupt access
 Interrupt_Time = None
@@ -317,8 +318,8 @@ def get_space_args(args):
     else:
         space_args = {
             'test__args': load_yaml(args.test_config) or {
-                'start_index': args.test_start_index
-                , 'end_index': args.test_end_index
+                'start_index': format_index_value(args.test_start_index, not args.no_datetime_convert, args.datetime_format)
+                , 'end_index': format_index_value(args.test_end_index, not args.no_datetime_convert, args.datetime_format)
                 , 'end_target': args.test_end_target
                 , 'test_size': args.test_size
                 , 'test_n': args.test_n
@@ -330,6 +331,8 @@ def get_space_args(args):
                 , 'granularities': args.data_granularities
                 , 'source': args.data_source
                 , 'dir': args.data_dir
+                , 'datetime_convert': not args.no_datetime_convert
+                , 'datetime_format': args.datetime_format
             }
             , 'indicator__args': load_yaml(args.indicator_config) or {
                 
@@ -361,6 +364,14 @@ def load_yaml(value):
 
 def str_or_none(x):
     return None if x.lower() == 'none' else str(x)
+
+def format_index_value(x, convert_datetime=True, datetime_format='%Y%m%d%H%M'):
+    if x is None:
+        return None
+    elif convert_datetime:
+        return datetime.strptime(x, datetime_format)
+    else:
+        return int(x) # \todo this should be str, don't know if rest of program supports it
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -415,11 +426,17 @@ def get_args():
     group_data.add_argument('--granularities', '-dg', dest='data_granularities', type=str, nargs='+', default=['H1'])
     group_data.add_argument('--source', '-ds', dest='data_source', type=str, default='csv')
     group_data.add_argument('--dir', '-dd', dest='data_dir', type=str, default='D:\\Projects\\Prices'
-        , help='Dir of CSV prices')    
+        , help='Dir of CSV prices')
+    group_data.add_argument('--no-datetime-convert', '-dtc', dest='no_datetime_convert', action='store_true', default=False
+        , help="Don't convert CSV indexes to datetime. Default: convert to datetime")
+    group_data.add_argument('--datetime-format', '-dtf', dest='datetime_format', type=str, default='%Y%m%d%H%M'
+        , help='Datetime format to parse from string. Default: %%Y%%m%%d%%H%%M (201701031800)')
 
     # test parameters
-    group_test.add_argument('--start-index', '-tsi', dest='test_start_index', type=int, default=None) ### TODO ### supposed to be str
-    group_test.add_argument('--end-index', '-tei', dest='test_end_index', type=int, default=None) ### TODO ### supposed to be str
+    group_test.add_argument('--start-index', '-tsi', dest='test_start_index', type=str, default=None
+        , help='Index to start evaluation set. If converting to datetime (see above params), format must be in --datetime-format.')
+    group_test.add_argument('--end-index', '-tei', dest='test_end_index', type=str, default=None
+        , help='Index to end evaluation set. If converting to datetime (see above params), format must be in --datetime-format.')
     group_test.add_argument('--end-target', '-tt', dest='test_end_target', type=int, default=None # -61
         , help='End offset of price target')
     group_test.add_argument('--test-size', '-tss', dest='test_size', type=int, default=None) # 120

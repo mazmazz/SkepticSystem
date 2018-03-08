@@ -464,6 +464,8 @@ def do_data(data_params, cv_params):
         , dir=data_params['dir']
         , from_test=True
         , target_gap=cv_params['target_gap']
+        , index_to_datetime=data_params['index_to_datetime']
+        , datetime_format=data_params['datetime_format']
     )
     target = get_target(prices, data_params['end_target'], start_offset=data_params['start_target'])
     return prices, target

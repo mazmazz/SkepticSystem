@@ -13,6 +13,8 @@ def get_data_space(
     , end_buffer = 0
     , instrument=None # to define explicitly
     , granularity=None  # to define explicitly
+    , datetime_convert=False
+    , datetime_format='%Y%m%d%H%M'
 ):
     space = {
         'instrument': instrument or (hp.choice('data__instrument', instruments) if isinstance(instruments, list) else instruments)
@@ -24,6 +26,8 @@ def get_data_space(
         , 'start_buffer': start_buffer
         , 'end_buffer': end_buffer
         , 'start_target': start_target
+        , 'index_to_datetime': datetime_convert
+        , 'datetime_format': datetime_format
     }
 
     if end_target is not None:

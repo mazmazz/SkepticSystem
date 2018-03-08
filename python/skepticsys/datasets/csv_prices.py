@@ -35,6 +35,7 @@ def load_csv_prices(
     , start_buffer=1000
     , end_buffer=0
     , target_gap=False
+    , datetime_format='%Y%m%d%H%M'
 ):
     params_dict = locals()
     params = ', '.join(['{}={}'.format(k, params_dict[k]) for k in sorted(list(params_dict))])
@@ -68,7 +69,7 @@ def load_csv_prices(
 
     # make index datetime
     if index_to_datetime:
-        data = make_datetimeindex(data)
+        data = make_datetimeindex(data, dt_format=datetime_format)
 
     # if start/end_index are datetime, now truncate samples
     if isinstance(start_index, datetime.datetime) or isinstance(end_index, datetime.datetime):
@@ -129,7 +130,7 @@ def truncate_df(data, start_index=None, end_index=None, sample_len=None, from_te
 
     return output
 
-def make_datetimeindex(df):
+def make_datetimeindex(df, dt_format='%Y%m%d%H%M'):
     # first convert index to string type (dtype object)
     if df.index.dtype != object:
         df_index = df.index.map(str)
@@ -137,5 +138,5 @@ def make_datetimeindex(df):
         df_index = df.index
 
     # convert index to datetime
-    df.index = pd.to_datetime(df_index)
+    df.index = pd.to_datetime(df_index, format=dt_format)
     return df
