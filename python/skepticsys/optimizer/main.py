@@ -364,68 +364,71 @@ def str_or_none(x):
 
 def get_args():
     parser = argparse.ArgumentParser()
+    group_main = parser.add_argument_group('main', 'Trials data I/O')
+    group_opt = parser.add_argument_group('optimization', 'Shared optimization parameters')
+    group_fmin = parser.add_argument_group('fmin')
+    group_eval = parser.add_argument_group('eval')
+    group_config = parser.add_argument_group('config', 'YAML files for each search space')
+    group_data = parser.add_argument_group('data', 'Price data parameters')
+    group_test = parser.add_argument_group('test', 'Test parameters')
 
-    parser.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default=None
+    group_main.add_argument('--trials-path', '-tp', dest='fmin_trials', type=str_or_none, default=None
         , help='Path to file or mongo URI')
-    parser.add_argument('--mongo-key', '-md', dest='mongo_key', type=str, default=None
+    group_main.add_argument('--mongo-key', '-md', dest='mongo_key', type=str, default=None
         , help='Experiment key to read')
-
-    parser.add_argument('--fmin', '-f', action='store_true', default=False
-        , help='Run fmin optimizer')
-
-    parser.add_argument('--eval', '-e', action='store_true', default=False
-        , help='Run a randomly generated sample(s), up to --candidates.')
-    parser.add_argument('--eval-trials', '-et', dest='eval_trials', action='store_true', default=False
-        , help='Eval best candidate from --trials-path.')
-    parser.add_argument('--eval-params', '-ep', dest='eval_params', type=str, default=None
-        , help='Pre-existing params to load for eval. Can be trials pickle (.p, .pkl, .pickle) or YAML.')
-
-    parser.add_argument('--candidates', '-s', dest='sample_count', type=int, default=1
-        , help='Number of candidates to sample in --eval or --fmin.')
-
-    parser.add_argument('--show-trials', '-st', dest='show_trials', action='store_true', default=False
+    group_main.add_argument('--show-trials', '-st', dest='show_trials', action='store_true', default=False
         , help='Show trials statistics from --trials-path')
-    parser.add_argument('--show-sample', '-ss', dest='show_sample', action='store_true', default=False
+    group_main.add_argument('--save-best-params', '-sbp', dest='best_params_path', type=str_or_none, default=None
+        , help='Path to save best candidate in fmin or --show-trials.')
+    group_main.add_argument('--save-best-result', '-sbr', dest='best_result_path', type=str_or_none, default=None
+        , help='Path to save best trial result.')
+    group_main.add_argument('--show-sample', '-ss', dest='show_sample', action='store_true', default=False
         , help='Print randomly generated or loaded sample(s)')
-    parser.add_argument('--trials-n', '-tn', dest='trials_n', type=int, default=1
+
+    group_opt.add_argument('--candidates', '-s', dest='sample_count', type=int, default=1
+        , help='Number of candidates to sample in --eval or --fmin.')
+    group_opt.add_argument('--trials-n', '-tn', dest='trials_n', type=int, default=1
         , help='# of trials to show for --show-trials or fmin results. default: 1')
 
-    parser.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
+    group_fmin.add_argument('--fmin', '-f', action='store_true', default=False
+        , help='Run fmin optimizer')
+    group_fmin.add_argument('--fmin-reset', '-fr', dest='fmin_reset', action='store_true', default=False
         , help='If --trials-path exists, do not load it for fmin. Has no effect if using MongoDB.')
 
-    parser.add_argument('--save-best-params', '-sbp', dest='best_params_path', type=str_or_none, default=None
-        , help='Path to save best candidate in fmin or --show-trials.')
-    parser.add_argument('--save-best-result', '-sbr', dest='best_result_path', type=str_or_none, default=None
-        , help='Path to save best trial result.')
+    group_eval.add_argument('--eval', '-e', action='store_true', default=False
+        , help='Run a randomly generated sample(s), up to --candidates.')
+    group_eval.add_argument('--eval-trials', '-et', dest='eval_trials', action='store_true', default=False
+        , help='Eval best candidate from --trials-path.')
+    group_eval.add_argument('--eval-params', '-ep', dest='eval_params', type=str, default=None
+        , help='Pre-existing params to load for eval. Can be trials pickle (.p, .pkl, .pickle) or YAML.')
 
-    parser.add_argument('--space-config', '-sc', dest='space_config', type=str, default=None)
-    parser.add_argument('--test-config', '-tc', dest='test_config', type=str, default=None)
-    parser.add_argument('--data-config', '-dc', dest='data_config', type=str, default=None)
-    parser.add_argument('--indi-config', '-ic', dest='indicator_config', type=str, default=None)
-    parser.add_argument('--classifier-config', '-cc', dest='classifier_config', type=str, default=None)
-    parser.add_argument('--cv-config', '-vc', dest='cv_config', type=str, default=None)
-    parser.add_argument('--meta-config', '-mc', dest='meta_config', type=str, default=None)
+    group_config.add_argument('--space-config', '-sc', dest='space_config', type=str, default=None)
+    group_config.add_argument('--test-config', '-tc', dest='test_config', type=str, default=None)
+    group_config.add_argument('--data-config', '-dc', dest='data_config', type=str, default=None)
+    group_config.add_argument('--indi-config', '-ic', dest='indicator_config', type=str, default=None)
+    group_config.add_argument('--classifier-config', '-cc', dest='classifier_config', type=str, default=None)
+    group_config.add_argument('--cv-config', '-vc', dest='cv_config', type=str, default=None)
+    group_config.add_argument('--meta-config', '-mc', dest='meta_config', type=str, default=None)
 
     # data parameters
-    parser.add_argument('--instruments', '-di', dest='data_instruments', type=str, nargs='+', default=['USDJPY'])
-    parser.add_argument('--granularities', '-dg', dest='data_granularities', type=str, nargs='+', default=['H1'])
-    parser.add_argument('--source', '-ds', dest='data_source', type=str, default='csv')
-    parser.add_argument('--dir', '-dd', dest='data_dir', type=str, default='D:\\Projects\\Prices'
+    group_data.add_argument('--instruments', '-di', dest='data_instruments', type=str, nargs='+', default=['USDJPY'])
+    group_data.add_argument('--granularities', '-dg', dest='data_granularities', type=str, nargs='+', default=['H1'])
+    group_data.add_argument('--source', '-ds', dest='data_source', type=str, default='csv')
+    group_data.add_argument('--dir', '-dd', dest='data_dir', type=str, default='D:\\Projects\\Prices'
         , help='Dir of CSV prices')    
 
     # test parameters
-    parser.add_argument('--start-index', '-tsi', dest='test_start_index', type=int, default=None) ### TODO ### supposed to be str
-    parser.add_argument('--end-index', '-tei', dest='test_end_index', type=int, default=None) ### TODO ### supposed to be str
-    parser.add_argument('--end-target', '-tt', dest='test_end_target', type=int, default=None # -61
+    group_test.add_argument('--start-index', '-tsi', dest='test_start_index', type=int, default=None) ### TODO ### supposed to be str
+    group_test.add_argument('--end-index', '-tei', dest='test_end_index', type=int, default=None) ### TODO ### supposed to be str
+    group_test.add_argument('--end-target', '-tt', dest='test_end_target', type=int, default=None # -61
         , help='End offset of price target')
-    parser.add_argument('--test-size', '-tss', dest='test_size', type=int, default=None) # 120
-    parser.add_argument('--test-n', '-tsn', dest='test_n', type=int, default=None) # 4
-    parser.add_argument('--train-size', '-tns', dest='train_size', type=int, default=None) # 6000
-    parser.add_argument('--train-sliding', '-tnl', dest='train_sliding', type=bool, default=None) # True
-
-    parser.add_argument('--super-threshold', '-sh', dest='super_threshold', type=float, default=0.65)
-    parser.add_argument('--super-field', '-sf', dest='super_field', type=str, default='accuracy')
-    parser.add_argument('--transform-limit', '-tl', dest='transform_limit', type=int, default=0)
+    group_test.add_argument('--test-size', '-tss', dest='test_size', type=int, default=None) # 120
+    group_test.add_argument('--test-n', '-tsn', dest='test_n', type=int, default=None) # 4
+    group_test.add_argument('--train-size', '-tns', dest='train_size', type=int, default=None) # 6000
+    group_test.add_argument('--train-sliding', '-tnl', dest='train_sliding', type=bool, default=None) # True
+    group_test.add_argument('--super-threshold', '-sh', dest='super_threshold', type=float, default=0.65)
+    group_test.add_argument('--super-field', '-sf', dest='super_field', type=str, default='accuracy')
+    group_test.add_argument('--transform-limit', '-tl', dest='transform_limit', type=int, default=0)
 
     return parser.parse_args()
 
