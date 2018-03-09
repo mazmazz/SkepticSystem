@@ -794,7 +794,7 @@ def do_backtest(
 
     # make scorers
     bts = BacktraderScorer(cerebro
-        , SeriesStrategy, 'signals', strategy_kwargs={'tradeintervalbars':0, 'tradeexpirebars':expirebars, 'stake':1}
+        , SeriesStrategy, 'signals', strategy_kwargs={'tradeintervalbars':0, 'defaultexpiration':expirebars, 'stake':1}
         , analyzer_name=['BasicStats'], analysis_key=[[]], score_name=[None] #, score_name=['stats']
         , initial_cash=initial_balance
     )

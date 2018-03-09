@@ -4,14 +4,29 @@ from .basictradestats import BasicTradeStats
 from .multiposition import MultiPositionStrategy
 
 class SeriesSignals(bt.Indicator):
-    lines = ('signal',)
+    lines = ('signal','expiration')
     params = {
         'signalsrc': None
+        , 'signalexpiration': None
+        , 'defaultexpiration': 1
     }
 
     def __init__(self):
-        if not isinstance(self.params.signalsrc, pd.Series) and not isinstance(self.params.signalsrc, pd.DataFrame):
+        # register signalsrc
+        if self.params.signalsrc is None:
+            self.signalsrc = arr_to_datetime(pd.Series())
+        elif not is_pandas(self.params.signalsrc):
             raise ValueError('Signalsrc (type %s) must be a Pandas Series.' % (type(self.params.signalsrc)))
+        else:
+            self.signalsrc = self.params.signalsrc #arr_to_datetime(self.params.signalsrc)
+
+        # register signalexpiration
+        if self.params.signalexpiration is None:
+            self.signalexpiration = arr_to_datetime(pd.Series())
+        elif not is_pandas(self.params.signalexpiration):
+            raise ValueError('signalexpiration (type %s) must be a Pandas Series.' % (type(self.params.signalexpiration)))
+        else:
+            self.signalexpiration = self.params.signalexpiration #arr_to_datetime(self.params.signalexpiration)
 
         # if signalsrc values are [0,1], make them [-1,1]
         if -1 not in self.params.signalsrc.values and 0 in self.params.signalsrc.values:
@@ -19,13 +34,20 @@ class SeriesSignals(bt.Indicator):
         else:
             self.signalsrc = self.params.signalsrc
 
+        # register defaultexpiration
+        self.defaultexpiration = self.params.defaultexpiration
+
     def next(self):
         signalsrc = self.signalsrc
+        signalexpiration = self.signalexpiration
+        defaultexpiration = self.defaultexpiration
         dt = self.datas[0].datetime.datetime(0)
             # get current dt signal, as next() runs
             # on current bar close and order executes
             # on next bar open
+            
         self.lines.signal[0] = signalsrc.loc[dt] if dt in signalsrc.index else 0
+        self.lines.expiration[0] = signalexpiration.loc[dt] if dt in signalexpiration.index else defaultexpiration
 
 # Create a Stratey
 class SeriesStrategy(MultiPositionStrategy):
@@ -35,7 +57,7 @@ class SeriesStrategy(MultiPositionStrategy):
         , 'closeonsame': True
         , 'executeonsame': False
         , 'tradeintervalbars': 0
-        , 'tradeexpirebars': 60
+        , 'defaultexpiration': 1
         , 'stake': 1
     }
 
@@ -74,7 +96,7 @@ class SeriesStrategy(MultiPositionStrategy):
         super().notify_trade(trade)
 
     def __init__(self):
-        self.seriessignals = SeriesSignals(signalsrc=self.params.signals)
+        self.seriessignals = SeriesSignals(signalsrc=self.params.signals, signalexpiration=self.params.signalexpiration, defaultexpiration=self.params.defaultexpiration)
         self.entrylapse_ = 0
         self.tradeid_ = 100
         super().__init__()
@@ -85,7 +107,6 @@ class SeriesStrategy(MultiPositionStrategy):
         closeonsame = self.params.closeonsame
         executeonsame = self.params.executeonsame
         tradeinterval = self.params.tradeintervalbars
-        tradeexpire = self.params.tradeexpirebars
 
         # long/short feeds
         long_feed = self.datas[0]
@@ -94,7 +115,8 @@ class SeriesStrategy(MultiPositionStrategy):
         short_position = self.getshortpositionsize(data=short_feed)
 
         # get signal
-        signal = self.seriessignals[0]
+        signal = self.seriessignals.signal[0]
+        tradeexpire = self.seriessignals.expiration[0]
         self.log_signal(signal, long_feed.datetime.datetime(0))
         
         ##### Execution #####
@@ -122,27 +144,3 @@ class SeriesStrategy(MultiPositionStrategy):
                     self.sell(data=short_feed, tradeid=self.tradeid_)
             self.entrylapse_ = 0
             self.tradeid_ += 1
-
-def process_df(prices, y_pred):
-    """Prepare DataFrame indexes for backtrader. `prices` and `y_pred` are assumed
-    to have all necessary data points.
-    """
-    prices_trade = prices.copy()
-    y_trade = y_pred.copy()
-
-    # convert index to string type (dtype object)
-    if prices_trade.index.dtype != object:
-        prices_index = prices_trade.index.map(str)
-    else:
-        prices_index = prices_trade.index
-
-    if y_trade.index.dtype != object:
-        trade_index = y_trade.index.map(str)
-    else:
-        trade_index = y_trade.index
-
-    # convert index to datetime
-    prices_trade.index = pd.to_datetime(prices_index)
-    y_trade.index = pd.to_datetime(trade_index)
-
-    return prices_trade, y_trade

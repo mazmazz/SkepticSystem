@@ -90,7 +90,7 @@ def get_bounds(
                 final_end_loc = start_loc+sample_len
                 final_start_loc = start_loc
             else: 
-                final_start_loc = end_loc-sample_len
+                final_start_loc = end_loc-abs(sample_len)
                 final_end_loc = end_loc
         else:
             final_start_loc, final_end_loc = start_loc, end_loc
