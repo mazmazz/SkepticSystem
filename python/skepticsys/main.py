@@ -1,5 +1,5 @@
-from space import get_space
-from candidate import do_candidate
+from optimizer.space import get_space
+from optimizer.candidate import do_candidate
 from hyperopt import fmin, tpe, hp, STATUS_OK, Trials, space_eval
 from talib import MA_Type
 import hyperopt.pyll.stochastic
