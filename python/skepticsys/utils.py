@@ -121,6 +121,12 @@ def arr_to_datetime(y_pred, y_true=None, dt_format='%Y%m%d%H%M'):
 def is_pandas(x):
     return isinstance(x, pd.DataFrame) or isinstance(x, pd.Series)
 
+def copy_arr(x):
+    if is_pandas(x):
+        return x.copy()
+    else:
+        return np.copy(x)
+
 def get_proba(proba, proba_positive=False):
     if proba_positive:
         if is_pandas(proba):
