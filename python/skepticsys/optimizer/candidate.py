@@ -4,7 +4,6 @@ import hyperopt as hp
 from hyperopt import fmin, space_eval, tpe, Trials
 from imblearn.pipeline import make_pipeline
 from collections import OrderedDict, Iterable
-import copy
 from xgboost import XGBClassifier
 import random
 import sklearn.metrics as skm
@@ -27,9 +26,8 @@ from cross_validation import SingleSplit, WindowSplit
 from estimators import ClassifierCV, CalibratedClassifierCV, ThresholdClassifierCV, CutoffClassifierCV
 from metrics import BacktraderScorer
 from trading import SeriesStrategy, BasicTradeStats
-from preprocessors import IndicatorTransformer, CopyTransformer, DeltaTransformer, ShiftTransformer, NanSampler
+from preprocessors import MultiSampler, NanSampler
 from datasets import load_prices, get_target
-from pipeline import make_union
 from utils import arr_to_datetime
 sys.path.pop(0)
 # end parent submodules
@@ -133,25 +131,12 @@ def do_fit_predict(params, super_threshold_level=0.65, super_threshold_field='ac
 
     # do indicators
     print('Doing indicators') ##############
-    indi_pipeline = do_indicators(**params['indicator__params'])
-    if not bool(indi_pipeline):
-        return fail_trial('Indicator pipeline: No transformers')
-    prices_indi = indi_pipeline.transform(prices_model)
-    # drop nan
-    prices_indi, target_indi = nans.sample(prices_indi, target_model)
+    prices_indi, target_indi = MultiSampler(params['indicator__params'], drop_nan=True
+                                            , drop_inf=False, unique_column_names=True
+                                            ).sample(prices_model, target_model)
 
     if len(prices_indi) == 0:
         return fail_trial('Nan pipeline: No prices exist after transformation', shape=prices_indi.shape)
-
-    # make all column names unique
-    dup_cols = prices_indi.columns.get_duplicates()
-    if len(dup_cols) > 0:
-        dups = prices_indi.columns[prices_indi.columns.isin(dup_cols)]
-        dup_vals = prices_indi.loc[:,prices_indi.columns.isin(dup_cols)]
-        unq_vals = prices_indi.loc[:,~prices_indi.columns.isin(dup_cols)]
-        fixed_dups = dups.map(lambda x: x+'__'+str(random.uniform(0,1)))
-        dup_vals.columns = fixed_dups
-        prices_indi = pd.concat([unq_vals, dup_vals], axis=1)
 
     # do classifier
     print('Doing classifier') ##############
@@ -627,93 +612,6 @@ def get_cv(prices, data_params, cv_params, base_only=False, do_verify=False):
             return [[unit[-1]] for unit in verify_cv]
         else:
             return verify_cv
-
-####################################
-# Indicators
-####################################
-
-def do_indicators(
-    **indi_params_
-):
-    master_union = []
-    indi_params = copy.deepcopy(indi_params_)
-    for indi in indi_params:
-        if not bool(indi_params[indi]):
-            continue
-
-        main_params = indi_params[indi].pop('_params', None)
-    
-        for subindi in indi_params[indi]:
-            if not bool(indi_params[indi][subindi]):
-                continue
-            else:
-                trans_pipe = []
-
-            # do ma for the subindi pipeline
-            ### HACK ### 
-            # Params dict copy is needed to fix an error where IndicatorTransformer stores an empty dict
-            # instead of the params
-            if '_ma' in indi_params[indi][subindi] and bool(indi_params[indi][subindi]['_ma']):
-                ma_params = indi_params[indi][subindi]['_ma']
-                pre = ma_params.pop('_pre', None)
-                if pre:
-                    trans_pipe.append(IndicatorTransformer(**{'ma__pre': {**ma_params}}))
-                    trans_pipe.append(IndicatorTransformer(**{indi: {**main_params}}))
-                else:
-                    trans_pipe.append(IndicatorTransformer(**{indi: {**main_params}}))
-                    trans_pipe.append(IndicatorTransformer(**{'ma__post': {**ma_params}}))
-            else:
-                trans_pipe.append(IndicatorTransformer(**{indi: {**main_params}}))
-
-            # do delta child pipelines
-            if '_delta' in indi_params[indi][subindi] and bool(indi_params[indi][subindi]['_delta']):
-                delta_params = indi_params[indi][subindi]['_delta']
-                base = delta_params.pop('_base', None)
-                for inst in delta_params:
-                    if not bool(delta_params[inst]):
-                        continue
-                    ma_params = delta_params[inst].pop('_ma', None)
-                    shift_params = delta_params[inst].pop('_shift', None)
-
-                    # copy current pipe and apply transformer
-                    inst_pipe = copy.deepcopy(trans_pipe)
-                    inst_pipe.append(DeltaTransformer(**delta_params[inst]))
-
-                    # if ma is specified, do that
-                    if bool(ma_params):
-                        ma_params.pop('_pre', None)
-                        inst_pipe.append(IndicatorTransformer(**{'ma__delta':{**ma_params}}))
-
-                    # if shift is specified, do that
-                    if bool(shift_params):
-                        inst_pipe.append(ShiftTransformer(**shift_params))
-
-                    if len(inst_pipe) == 1:
-                        master_union.append(inst_pipe[0])
-                    elif len(inst_pipe) > 1:
-                        master_union.append(make_pipeline(*inst_pipe))
-                    # else, don't append anything, continue
-                # if _base exists and is false, don't construct the subindi pipeline (non-delta)
-                if base is not None and not base:
-                    continue
-                # else, continue constructing the subindi pipeline
-
-            # do shift for the subindi pipeline
-            if '_shift' in indi_params[indi][subindi] and bool(indi_params[indi][subindi]['_shift']):
-                trans_pipe.append(ShiftTransformer(**indi_params[indi][subindi]['_shift'], keep_features=True))
-
-            if len(trans_pipe) == 1:
-                master_union.append(trans_pipe[0])
-            elif len(trans_pipe) > 1:
-                master_union.append(make_pipeline(*trans_pipe))
-            # else, don't append anything, continue
-    
-    if len(master_union) == 1:
-        return master_union[0]
-    elif len(master_union) > 1:
-        return make_union(*master_union)
-    else:
-        return None
 
 ####################################
 # Classifiers and Transforms
