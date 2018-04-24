@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
-from sklearn.base import BaseEstimator, TransformerMixin, ClassifierMixin
 from sklearn.utils import check_array
 import collections
+from imblearn.base import SamplerMixin
 
 # parent submodules
 import os, sys
@@ -11,7 +11,7 @@ from utils import _get_price_field
 sys.path.pop(0)
 # end parent submodules
 
-class ConvolutionTransformer(BaseEstimator, TransformerMixin):
+class ConvolutionSampler(SamplerMixin):
     """Transformer for passing input data as a convolution matrix.
 
     Parameters
@@ -35,42 +35,13 @@ class ConvolutionTransformer(BaseEstimator, TransformerMixin):
         self.time_range = time_range
         self.price_range = price_range
 
-    def fit(self, X, y=None, **fit_params):
-        """Fit the ConvolutionTransformer transformer.
-
-        Parameters
-        ----------
-        X: array-like of shape (n_samples, n_features)
-            The training input samples.
-        y: array-like, shape (n_samples,)
-            The target values (integers that correspond to classes in classification, real numbers in regression).
-        fit_params:
-            Other estimator-specific parameters.
-
-        Returns
-        -------
-        self: object
-            Returns a copy of the estimator
-        """
+    def fit(self, X, y, *args):
         return self
 
-    def transform(self, X):
-        """Transform data into a convolution matrix
+    def sample(self, X, y, *args):
+        return self._sample(X, y, *args)
 
-        Parameters
-        ----------
-        X: numpy ndarray, {n_samples, n_components}
-            New data, where n_samples is the number of samples and n_components is the number of components.
-
-        Returns
-        -------
-        X_transformed: array-like, shape (n_samples, n_features + 1) or (n_samples, n_features + 1 + n_classes) for classifier with predict_proba attribute
-            Copied features.
-        """
-        # if isinstance(X, pd.DataFrame) or isinstance(X, pd.Series):
-        #     return X.copy()
-        # else:
-        #     return np.copy(X)
+    def _sample(self, X, y, *args):
         return self._do_transform(X)
 
     def _do_transform(stock_data):
